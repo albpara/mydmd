@@ -21,6 +21,7 @@
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 float colorHue = 0.0;
+int textScrollX = 128;  // Posición X del texto deslizante (empieza fuera a la derecha)
 
 // Convertir HSV a RGB para transiciones suaves
 uint16_t hsvToRGB(float hue) {
@@ -45,6 +46,14 @@ uint16_t hsvToRGB(float hue) {
   int blue = (int)((b + m) * 255);
   
   return dma_display->color565(red, green, blue);
+}
+
+// Calcular el ancho del texto basado en tamaño y longitud
+int calculateTextWidth(const char* text, int textSize) {
+  // Fuente Adafruit estándar: 5 píxeles por carácter + 1 espacio = 6 píxeles en size(1)
+  // En size(textSize): 6 * textSize píxeles por carácter
+  int charWidth = 6 * textSize;
+  return strlen(text) * charWidth;
 }
 
 void setup() {
@@ -100,30 +109,35 @@ void loop() {
   dma_display->fillScreen(0);
 
   // Setear tamaño de texto
-  dma_display->setTextSize(1);
+  dma_display->setTextSize(2);  // Tamaño más grande para el scroll
+  dma_display->setTextWrap(false);
   
-  // Obtener color actual del arcoíris (suave transición)
+  // Obtener color actual del arcoíris
   uint16_t currentColor = hsvToRGB(colorHue);
   dma_display->setTextColor(currentColor);
 
-  // Mostrar texto en primer panel (izquierda)
-  dma_display->setCursor(10, 8);
-  dma_display->println("PANEL 1");
-  dma_display->setCursor(15, 20);
-  dma_display->println("TEST");
+  // Texto largo que se desliza
+  const char* scrollText = "RETRO PIXEL LED - DMD PANELS";
+  
+  // Calcular dinámicamente el ancho del texto
+  int textWidth = calculateTextWidth(scrollText, 2);
+  
+  // Dibujar texto en la posición X actual
+  dma_display->setCursor(textScrollX, 8);
+  dma_display->print(scrollText);
 
-  // Mostrar texto en segundo panel (derecha) con color desfasado
-  uint16_t nextColor = hsvToRGB(fmod(colorHue + 120, 360.0));
-  dma_display->setTextColor(nextColor);
-  dma_display->setCursor(PANEL_WIDTH + 10, 8);
-  dma_display->println("PANEL 2");
-  dma_display->setCursor(PANEL_WIDTH + 15, 20);
-  dma_display->println("DEMO");
+  // Mover el texto hacia la izquierda
+  textScrollX -= 1;  // Velocidad del scroll (píxeles por frame)
+  
+  // Si el texto desapareció completamente (más allá del lado izquierdo), reiniciar
+  if (textScrollX < -textWidth) {
+    textScrollX = 128;  // Reiniciar desde la derecha
+  }
 
-  // Incrementar hue suavemente (1 grado cada 30ms = 360 grados en ~11 segundos)
-  colorHue += 2.0;
+  // Incrementar hue para efecto arcoíris
+  colorHue += 1.0;
   if (colorHue >= 360.0) colorHue = 0.0;
   
-  // Actualizar cada 30ms para transiciones suaves
-  delay(30);
+  // Actualizar cada 50ms para fluidez
+  delay(50);
 }
