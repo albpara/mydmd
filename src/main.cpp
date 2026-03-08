@@ -20,6 +20,32 @@
 #define PANEL_HEIGHT 32
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
+float colorHue = 0.0;
+
+// Convertir HSV a RGB para transiciones suaves
+uint16_t hsvToRGB(float hue) {
+  float h = fmod(hue, 360.0);
+  float s = 1.0;  // Saturación completa
+  float v = 1.0;  // Brillo completo
+  
+  float c = v * s;
+  float x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
+  float m = v - c;
+  
+  float r, g, b;
+  if (h < 60) { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  
+  int red = (int)((r + m) * 255);
+  int green = (int)((g + m) * 255);
+  int blue = (int)((b + m) * 255);
+  
+  return dma_display->color565(red, green, blue);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -32,6 +58,12 @@ void setup() {
     PANEL_HEIGHT,     // alto
     2                 // número de paneles encadenados
   );
+
+  // Optimizaciones para reducir glitches y artefactos
+  mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_10M;  // Velocidad I2S
+  mxconfig.latch_blanking = 2;                 // Anti-ghosting (1-4, 2 es buen balance)
+  mxconfig.min_refresh_rate = 90;              // Tasa mínima de refresco (Hz)
+  mxconfig.clkphase = false;                   // Sincronización
 
   // Configurar pines
   mxconfig.gpio.r1 = R1_PIN;
@@ -60,17 +92,38 @@ void setup() {
   Serial.println("Matriz inicializada correctamente");
   delay(500);
 
-  // Llenar primer panel con ROJO (izquierdo)
-  dma_display->fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT, dma_display->color565(255, 0, 0));
-  delay(500);
-
-  // Llenar segundo panel con VERDE (derecho)
-  dma_display->fillRect(PANEL_WIDTH, 0, PANEL_WIDTH, PANEL_HEIGHT, dma_display->color565(0, 255, 0));
-
-  Serial.println("Paneles configurados - Rojo a la izquierda, Verde a la derecha");
+  Serial.println("Sistema listo - mostrando texto con colores arcoíris");
 }
 
 void loop() {
-  delay(1000);
-  // Por ahora sin cambios en el loop - solo mantener los colores
+  // Limpiar pantalla
+  dma_display->fillScreen(0);
+
+  // Setear tamaño de texto
+  dma_display->setTextSize(1);
+  
+  // Obtener color actual del arcoíris (suave transición)
+  uint16_t currentColor = hsvToRGB(colorHue);
+  dma_display->setTextColor(currentColor);
+
+  // Mostrar texto en primer panel (izquierda)
+  dma_display->setCursor(10, 8);
+  dma_display->println("PANEL 1");
+  dma_display->setCursor(15, 20);
+  dma_display->println("TEST");
+
+  // Mostrar texto en segundo panel (derecha) con color desfasado
+  uint16_t nextColor = hsvToRGB(fmod(colorHue + 120, 360.0));
+  dma_display->setTextColor(nextColor);
+  dma_display->setCursor(PANEL_WIDTH + 10, 8);
+  dma_display->println("PANEL 2");
+  dma_display->setCursor(PANEL_WIDTH + 15, 20);
+  dma_display->println("DEMO");
+
+  // Incrementar hue suavemente (1 grado cada 30ms = 360 grados en ~11 segundos)
+  colorHue += 2.0;
+  if (colorHue >= 360.0) colorHue = 0.0;
+  
+  // Actualizar cada 30ms para transiciones suaves
+  delay(30);
 }
