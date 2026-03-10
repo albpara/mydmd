@@ -46,38 +46,53 @@ unsigned long lastModeChange = 0;
 #define PANEL_HEIGHT 32
 
 #define BRIGHTNESS 16
+#define SCROLL_START_X 128
+#define DISPLAY_Y_OFFSET 8
+#define TEXT_SIZE 2
+#define SCROLL_SPEED 1
+#define LOOP_DELAY_MS 50
+#define JSON_BUFFER_SIZE 256
+#define MAGENTA_COLOR dma_display->color565(255, 100, 255)
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 float colorHue = 0.0;
-int textScrollX = 128;
+int textScrollX = SCROLL_START_X;
 
 uint16_t hsvToRGB(float hue) {
-  float h = fmod(hue, 360.0);
-  float s = 1.0;
-  float v = 1.0;
-
-  float c = v * s;
+  float h = (hue >= 360.0) ? fmod(hue, 360.0) : hue;
+  float c = 1.0;  // v * s where v=1.0, s=1.0
   float x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
-  float m = v - c;
+  
+  float r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { b = c; r = x; }
+  else if (h < 300) { r = x; b = c; }
+  else { r = c; b = x; }
 
-  float r, g, b;
-  if (h < 60) { r = c; g = x; b = 0; }
-  else if (h < 120) { r = x; g = c; b = 0; }
-  else if (h < 180) { r = 0; g = c; b = x; }
-  else if (h < 240) { r = 0; g = x; b = c; }
-  else if (h < 300) { r = x; g = 0; b = c; }
-  else { r = c; g = 0; b = x; }
-
-  int red = (int)((r + m) * 255);
-  int green = (int)((g + m) * 255);
-  int blue = (int)((b + m) * 255);
-
-  return dma_display->color565(red, green, blue);
+  return dma_display->color565((int)(r * 255), (int)(g * 255), (int)(b * 255));
 }
 
-int calculateTextWidth(const char* text, int textSize) {
-  int charWidth = 6 * textSize;
-  return strlen(text) * charWidth;
+int calculateTextWidth(const String& text) {
+  return text.length() * (6 * TEXT_SIZE);
+}
+
+void displayScrollText() {
+  dma_display->setTextSize(TEXT_SIZE);
+  dma_display->setTextWrap(false);
+  uint16_t currentColor = hsvToRGB(colorHue);
+  dma_display->setTextColor(currentColor);
+
+  int textWidth = calculateTextWidth(scrollText);
+  dma_display->setCursor(textScrollX, DISPLAY_Y_OFFSET);
+  dma_display->print(scrollText.c_str());
+
+  textScrollX -= SCROLL_SPEED;
+  if (textScrollX < -textWidth) textScrollX = SCROLL_START_X;
+
+  colorHue += 1.0;
+  if (colorHue >= 360.0) colorHue = 0.0;
 }
 
 void syncNTP() {
@@ -109,13 +124,13 @@ void displayClock() {
   char timeStr[9];
   strftime(timeStr, sizeof(timeStr), "%H:%M:%S", timeinfo);
 
-  dma_display->setTextSize(2);
-  dma_display->setTextColor(dma_display->color565(255, 100, 255)); // Magenta
+  dma_display->setTextSize(TEXT_SIZE);
+  dma_display->setTextColor(MAGENTA_COLOR);
 
   // 10 chars * 12px + some padding, centered on 128px width
   int centerX = max(0, (PANEL_WIDTH * 2 - (10 + 2) * 8) / 2);
 
-  dma_display->setCursor(centerX, 8);
+  dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
   dma_display->print(timeStr);
 }
 
@@ -618,7 +633,9 @@ void setupAsyncServer() {
     Serial.println("[API] GET /api/scan-wifi");
     int numNetworks = WiFi.scanNetworks();
     Serial.println("[API]   Encontradas " + String(numNetworks) + " redes");
-    String json = "{\"networks\":[";
+    String json;
+    json.reserve(JSON_BUFFER_SIZE);
+    json = "{\"networks\":[";
     for (int i = 0; i < numNetworks && i < 20; i++) {
       if (i > 0) json += ",";
       json += "{\"ssid\":\"" + String(WiFi.SSID(i)) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
@@ -665,12 +682,13 @@ void setupAsyncServer() {
 
   server.on("/api/wifi-status", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/wifi-status");
-    String json = "{\"connected\":false}";
+    String json;
     if (wifiConnected) {
       Serial.println("[API]   Conectado a: " + String(WiFi.SSID()));
       json = "{\"connected\":true,\"ssid\":\"" + String(WiFi.SSID()) + "\",\"ip\":\"" + WiFi.localIP().toString() + "\"}";
     } else {
       Serial.println("[API]   No conectado");
+      json = "{\"connected\":false}";
     }
     request->send(200, "application/json", json);
   });
@@ -716,9 +734,11 @@ void setupAsyncServer() {
 
   server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-modes");
-    String json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
-                  ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
-                  ",\"interval\":" + String(modeChangeInterval) + "}";
+    String json;
+    json.reserve(100);
+    json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
+           ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
+           ",\"interval\":" + String(modeChangeInterval) + "}";
     request->send(200, "application/json", json);
   });
 
@@ -865,38 +885,11 @@ void loop() {
   if (currentMode == 0 && modeClockEnabled && wifiConnected) {
     displayClock();
   } else if (currentMode == 1 && modeTextEnabled) {
-    // Show scroll text
-    dma_display->setTextSize(2);
-    dma_display->setTextWrap(false);
-    uint16_t currentColor = hsvToRGB(colorHue);
-    dma_display->setTextColor(currentColor);
-
-    int textWidth = calculateTextWidth(scrollText.c_str(), 2);
-    dma_display->setCursor(textScrollX, 8);
-    dma_display->print(scrollText.c_str());
-
-    textScrollX -= 1;
-    if (textScrollX < -textWidth) textScrollX = 128;
-
-    colorHue += 1.0;
-    if (colorHue >= 360.0) colorHue = 0.0;
+    displayScrollText();
   } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
     // Show text if clock is selected but no WiFi
-    dma_display->setTextSize(2);
-    dma_display->setTextWrap(false);
-    uint16_t currentColor = hsvToRGB(colorHue);
-    dma_display->setTextColor(currentColor);
-
-    int textWidth = calculateTextWidth(scrollText.c_str(), 2);
-    dma_display->setCursor(textScrollX, 8);
-    dma_display->print(scrollText.c_str());
-
-    textScrollX -= 1;
-    if (textScrollX < -textWidth) textScrollX = 128;
-
-    colorHue += 1.0;
-    if (colorHue >= 360.0) colorHue = 0.0;
+    displayScrollText();
   }
 
-  delay(50);
+  delay(LOOP_DELAY_MS);
 }
