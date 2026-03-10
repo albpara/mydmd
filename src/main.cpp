@@ -3,6 +3,7 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
+#include <time.h>
 
 const char* WIFI_SSID = "RetroPixelLED";
 const char* WIFI_PASSWORD = "";
@@ -19,6 +20,13 @@ String passwordWifi = "";
 String scrollText = "MAXIMO Y VICTOR";
 bool wifiConnected = false;
 uint32_t wifiConnectAttempt = 0;
+
+// Mode system variables
+bool modeClockEnabled = true;
+bool modeTextEnabled = true;
+uint16_t modeChangeInterval = 10; // seconds
+uint8_t currentMode = 0; // 0: clock, 1: text
+unsigned long lastModeChange = 0;
 
 #define R1_PIN 25
 #define G1_PIN 26
@@ -68,6 +76,77 @@ uint16_t hsvToRGB(float hue) {
 int calculateTextWidth(const char* text, int textSize) {
   int charWidth = 6 * textSize;
   return strlen(text) * charWidth;
+}
+
+void syncNTP() {
+  if (!wifiConnected) return;
+  
+  Serial.println("[NTP] Sincronizando hora...");
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  
+  time_t now = time(nullptr);
+  int attempts = 0;
+  while (now < 24 * 3600 && attempts < 20) {
+    delay(500);
+    now = time(nullptr);
+    attempts++;
+  }
+  
+  if (now > 24 * 3600) {
+    Serial.println("[NTP] Hora sincronizada");
+  } else {
+    Serial.println("[NTP] Error al sincronizar");
+  }
+}
+
+void displayClock() {
+  if (!wifiConnected) return;
+  
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  char timeStr[9];
+  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", timeinfo);
+  
+  dma_display->setTextSize(2);
+  dma_display->setTextColor(dma_display->color565(255, 100, 255)); // Magenta
+  
+  int charWidth = 5 * 2;  // 5 pixels per char * textSize 2 (Adafruit GFX default font)
+  int numChars = 8;       // HH:MM:SS is always 8 characters
+  int textWidth = numChars * charWidth;
+  int centerX = max(0, (PANEL_WIDTH - textWidth) / 2);
+  
+  dma_display->setCursor(centerX, 8);
+  dma_display->print(timeStr);
+}
+
+void updateMode() {
+  if (lastModeChange == 0) {
+    lastModeChange = millis();
+    return;
+  }
+  
+  unsigned long elapsed = millis() - lastModeChange;
+  if (elapsed >= (modeChangeInterval * 1000UL)) {
+    lastModeChange = millis();
+    
+    // Count enabled modes
+    int enabledModes = 0;
+    if (modeClockEnabled) enabledModes++;
+    if (modeTextEnabled) enabledModes++;
+    
+    if (enabledModes <= 1) return;
+    
+    // Switch to next enabled mode
+    bool found = false;
+    for (int i = 0; i < 2; i++) {
+      currentMode = (currentMode + 1) % 2;
+      if ((currentMode == 0 && modeClockEnabled) || (currentMode == 1 && modeTextEnabled)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) currentMode = 0;
+  }
 }
 
 String getPortalHTML() {
@@ -300,6 +379,16 @@ String getPortalHTML() {
     </fieldset>
 
     <fieldset>
+      <legend>Display Modes</legend>
+      <label style="display: flex; align-items: center; margin: 12px 0 6px 0; font-weight: 700; color: #000;"><input type="checkbox" id="mc" style="margin-right: 8px; cursor: pointer;"> Clock</label>
+      <label style="display: flex; align-items: center; margin: 12px 0 6px 0; font-weight: 700; color: #000;"><input type="checkbox" id="mt" style="margin-right: 8px; cursor: pointer;"> Text</label>
+      <label>Change Interval (seconds):</label>
+      <input type="number" id="mi" placeholder="10" min="1" max="300">
+      <button onclick="sm()">Save Modes</button>
+      <div id="mmsg" class="msg"></div>
+    </fieldset>
+
+    <fieldset>
       <legend>System</legend>
       <button onclick="rb()">Reboot Device</button>
       <div id="sm" class="msg"></div>
@@ -404,9 +493,55 @@ String getPortalHTML() {
         });
     }
 
+    function ldModes() {
+      fetch('/api/get-modes')
+        .then(r => r.json())
+        .then(d => {
+          if (d.clockEnabled) document.getElementById('mc').checked = true;
+          if (d.textEnabled) document.getElementById('mt').checked = true;
+          if (d.interval) document.getElementById('mi').value = d.interval;
+        })
+        .catch(e => console.log(e));
+    }
+
+    function sm() {
+      var mc = document.getElementById('mc').checked;
+      var mt = document.getElementById('mt').checked;
+      var mi = document.getElementById('mi').value || 10;
+      
+      if (!mc && !mt) {
+        alert('Select at least one mode');
+        return;
+      }
+      
+      var m = document.getElementById('mmsg');
+      m.textContent = 'Saving...';
+      m.className = 'msg show';
+      var f = new FormData();
+      f.append('clock', mc ? 1 : 0);
+      f.append('text', mt ? 1 : 0);
+      f.append('interval', mi);
+      fetch('/api/update-modes', { method: 'POST', body: f })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) {
+            m.textContent = 'Saved!';
+            m.className = 'msg show ok';
+          } else {
+            m.textContent = 'Error';
+            m.className = 'msg show er';
+          }
+        })
+        .catch(e => {
+          m.textContent = 'Failed';
+          m.className = 'msg show er';
+        });
+    }
+
     window.onload = function() {
       ldWiFi();
       ld();
+      ldModes();
     }
   </script>
 </body>
@@ -420,6 +555,9 @@ void initWiFiManager() {
   ssidWifi = preferences.getString("ssid", "");
   passwordWifi = preferences.getString("password", "");
   scrollText = preferences.getString("scrollText", "MAXIMO Y VICTOR");
+  modeClockEnabled = preferences.getBool("modeClock", true);
+  modeTextEnabled = preferences.getBool("modeText", true);
+  modeChangeInterval = preferences.getInt("modeInterval", 10);
   preferences.end();
 
   Serial.println("[WIFI] Cargadas credenciales de Preferences");
@@ -447,6 +585,7 @@ void initWiFiManager() {
       wifiConnected = true;
       Serial.println("[WIFI] CONECTADO: " + String(WiFi.SSID()));
       Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+      syncNTP();
       return;
     } else {
       Serial.println("[WIFI] Conexion fallida, entrando en Soft AP");
@@ -575,6 +714,52 @@ void setupAsyncServer() {
     ESP.restart();
   });
 
+  server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] GET /api/get-modes");
+    String json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) + 
+                  ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) + 
+                  ",\"interval\":" + String(modeChangeInterval) + "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/api/update-modes", HTTP_POST, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] POST /api/update-modes");
+    String response = "{\"success\":false}";
+    if (request->hasParam("clock", true) && request->hasParam("text", true) && request->hasParam("interval", true)) {
+      bool clockEnabled = request->getParam("clock", true)->value() == "1";
+      bool textEnabled = request->getParam("text", true)->value() == "1";
+      int interval = atoi(request->getParam("interval", true)->value().c_str());
+      
+      if (!clockEnabled && !textEnabled) {
+        Serial.println("[API]   ERROR: At least one mode must be enabled");
+        request->send(200, "application/json", response);
+        return;
+      }
+      
+      if (interval < 1 || interval > 300) {
+        Serial.println("[API]   ERROR: Invalid interval");
+        request->send(200, "application/json", response);
+        return;
+      }
+      
+      modeClockEnabled = clockEnabled;
+      modeTextEnabled = textEnabled;
+      modeChangeInterval = interval;
+      lastModeChange = 0;
+      currentMode = 0;
+      
+      preferences.begin("wifi", false);
+      preferences.putBool("modeClock", clockEnabled);
+      preferences.putBool("modeText", textEnabled);
+      preferences.putInt("modeInterval", interval);
+      preferences.end();
+      
+      response = "{\"success\":true}";
+      Serial.println("[API]   Modos guardados");
+    }
+    request->send(200, "application/json", response);
+  });
+
   server.onNotFound([](AsyncWebServerRequest *request) {
     Serial.println("[WEB] Request a ruta desconocida: " + request->url());
     request->send(200, "text/html; charset=utf-8", getPortalHTML());
@@ -647,6 +832,7 @@ void setup() {
   setupAsyncServer();
   delay(100);
   if (wifiConnected) {
+    syncNTP();
     showIPOnDMD();
   } else {
     setupDNS();
@@ -665,7 +851,7 @@ void loop() {
       wifiConnected = true;
       dnsServer.stop();
       Serial.println("[LOOP] DNS detenido");
-
+      syncNTP();
       // Mostrar IP en el DMD
       showIPOnDMD();
     } else if (millis() - wifiConnectAttempt > 30000) {
@@ -680,35 +866,61 @@ void loop() {
 
   dma_display->fillScreen(0);
 
-  // Mostrar SSID e IP si está en el tiempo de muestra
+  // Show WiFi info on connect
   if (showIPUntil > millis()) {
     dma_display->setTextSize(1);
     dma_display->setTextColor(dma_display->color565(0, 255, 0)); // Verde
-    
+
     String ssidStr = WiFi.SSID();
     String ipStr = WiFi.localIP().toString();
-    
+
     dma_display->setCursor(2, 5);
     dma_display->print(ssidStr);
-    
+
     dma_display->setCursor(2, 15);
     dma_display->print(ipStr);
   } else {
-    // Mostrar scroll texto normal
-    dma_display->setTextSize(2);
-    dma_display->setTextWrap(false);
-    uint16_t currentColor = hsvToRGB(colorHue);
-    dma_display->setTextColor(currentColor);
+    // Update mode logic if multiple modes enabled
+    if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
+      updateMode();
+    }
 
-    int textWidth = calculateTextWidth(scrollText.c_str(), 2);
-    dma_display->setCursor(textScrollX, 8);
-    dma_display->print(scrollText.c_str());
+    // Display based on current mode
+    if (currentMode == 0 && modeClockEnabled && wifiConnected) {
+      displayClock();
+    } else if (currentMode == 1 && modeTextEnabled) {
+      // Show scroll text
+      dma_display->setTextSize(2);
+      dma_display->setTextWrap(false);
+      uint16_t currentColor = hsvToRGB(colorHue);
+      dma_display->setTextColor(currentColor);
 
-    textScrollX -= 1;
-    if (textScrollX < -textWidth) textScrollX = 128;
+      int textWidth = calculateTextWidth(scrollText.c_str(), 2);
+      dma_display->setCursor(textScrollX, 8);
+      dma_display->print(scrollText.c_str());
 
-    colorHue += 1.0;
-    if (colorHue >= 360.0) colorHue = 0.0;
+      textScrollX -= 1;
+      if (textScrollX < -textWidth) textScrollX = 128;
+
+      colorHue += 1.0;
+      if (colorHue >= 360.0) colorHue = 0.0;
+    } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
+      // Show text if clock is selected but no WiFi
+      dma_display->setTextSize(2);
+      dma_display->setTextWrap(false);
+      uint16_t currentColor = hsvToRGB(colorHue);
+      dma_display->setTextColor(currentColor);
+
+      int textWidth = calculateTextWidth(scrollText.c_str(), 2);
+      dma_display->setCursor(textScrollX, 8);
+      dma_display->print(scrollText.c_str());
+
+      textScrollX -= 1;
+      if (textScrollX < -textWidth) textScrollX = 128;
+
+      colorHue += 1.0;
+      if (colorHue >= 360.0) colorHue = 0.0;
+    }
   }
 
   delay(50);
