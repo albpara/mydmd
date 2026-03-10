@@ -646,7 +646,11 @@ void setup() {
   delay(100);
   setupAsyncServer();
   delay(100);
-  if (!wifiConnected) setupDNS();
+  if (wifiConnected) {
+    showIPOnDMD();
+  } else {
+    setupDNS();
+  }
 
   Serial.println("\n========== SISTEMA LISTO ==========\n");
 }
@@ -676,12 +680,19 @@ void loop() {
 
   dma_display->fillScreen(0);
 
-  // Mostrar IP si está en el tiempo de muestra
+  // Mostrar SSID e IP si está en el tiempo de muestra
   if (showIPUntil > millis()) {
     dma_display->setTextSize(1);
     dma_display->setTextColor(dma_display->color565(0, 255, 0)); // Verde
+    
+    String ssidStr = WiFi.SSID();
+    String ipStr = WiFi.localIP().toString();
+    
     dma_display->setCursor(2, 5);
-    dma_display->print("IP: " + WiFi.localIP().toString());
+    dma_display->print(ssidStr);
+    
+    dma_display->setCursor(2, 15);
+    dma_display->print(ipStr);
   } else {
     // Mostrar scroll texto normal
     dma_display->setTextSize(2);
