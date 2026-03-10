@@ -17,7 +17,7 @@ Preferences preferences;
 
 String ssidWifi = "";
 String passwordWifi = "";
-String scrollText = "MAXIMO Y VICTOR";
+String scrollText = "Lorem Ipsum - RetroPixel LED Matrix Display";
 bool wifiConnected = false;
 uint32_t wifiConnectAttempt = 0;
 
@@ -44,6 +44,8 @@ unsigned long lastModeChange = 0;
 
 #define PANEL_WIDTH 64
 #define PANEL_HEIGHT 32
+
+#define BRIGHTNESS 16
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 float colorHue = 0.0;
@@ -80,10 +82,10 @@ int calculateTextWidth(const char* text, int textSize) {
 
 void syncNTP() {
   if (!wifiConnected) return;
-  
+
   Serial.println("[NTP] Sincronizando hora...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  
+
   time_t now = time(nullptr);
   int attempts = 0;
   while (now < 24 * 3600 && attempts < 20) {
@@ -91,7 +93,7 @@ void syncNTP() {
     now = time(nullptr);
     attempts++;
   }
-  
+
   if (now > 24 * 3600) {
     Serial.println("[NTP] Hora sincronizada");
   } else {
@@ -101,20 +103,18 @@ void syncNTP() {
 
 void displayClock() {
   if (!wifiConnected) return;
-  
+
   time_t now = time(nullptr);
   struct tm* timeinfo = localtime(&now);
   char timeStr[9];
   strftime(timeStr, sizeof(timeStr), "%H:%M:%S", timeinfo);
-  
+
   dma_display->setTextSize(2);
   dma_display->setTextColor(dma_display->color565(255, 100, 255)); // Magenta
-  
-  int charWidth = 5 * 2;  // 5 pixels per char * textSize 2 (Adafruit GFX default font)
-  int numChars = 8;       // HH:MM:SS is always 8 characters
-  int textWidth = numChars * charWidth;
-  int centerX = max(0, (PANEL_WIDTH - textWidth) / 2);
-  
+
+  // 10 chars * 12px + some padding, centered on 128px width
+  int centerX = max(0, (PANEL_WIDTH * 2 - (10 + 2) * 8) / 2);
+
   dma_display->setCursor(centerX, 8);
   dma_display->print(timeStr);
 }
@@ -124,18 +124,18 @@ void updateMode() {
     lastModeChange = millis();
     return;
   }
-  
+
   unsigned long elapsed = millis() - lastModeChange;
   if (elapsed >= (modeChangeInterval * 1000UL)) {
     lastModeChange = millis();
-    
+
     // Count enabled modes
     int enabledModes = 0;
     if (modeClockEnabled) enabledModes++;
     if (modeTextEnabled) enabledModes++;
-    
+
     if (enabledModes <= 1) return;
-    
+
     // Switch to next enabled mode
     bool found = false;
     for (int i = 0; i < 2; i++) {
@@ -508,12 +508,12 @@ String getPortalHTML() {
       var mc = document.getElementById('mc').checked;
       var mt = document.getElementById('mt').checked;
       var mi = document.getElementById('mi').value || 10;
-      
+
       if (!mc && !mt) {
         alert('Select at least one mode');
         return;
       }
-      
+
       var m = document.getElementById('mmsg');
       m.textContent = 'Saving...';
       m.className = 'msg show';
@@ -716,8 +716,8 @@ void setupAsyncServer() {
 
   server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-modes");
-    String json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) + 
-                  ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) + 
+    String json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
+                  ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
                   ",\"interval\":" + String(modeChangeInterval) + "}";
     request->send(200, "application/json", json);
   });
@@ -729,31 +729,31 @@ void setupAsyncServer() {
       bool clockEnabled = request->getParam("clock", true)->value() == "1";
       bool textEnabled = request->getParam("text", true)->value() == "1";
       int interval = atoi(request->getParam("interval", true)->value().c_str());
-      
+
       if (!clockEnabled && !textEnabled) {
         Serial.println("[API]   ERROR: At least one mode must be enabled");
         request->send(200, "application/json", response);
         return;
       }
-      
+
       if (interval < 1 || interval > 300) {
         Serial.println("[API]   ERROR: Invalid interval");
         request->send(200, "application/json", response);
         return;
       }
-      
+
       modeClockEnabled = clockEnabled;
       modeTextEnabled = textEnabled;
       modeChangeInterval = interval;
       lastModeChange = 0;
       currentMode = 0;
-      
+
       preferences.begin("wifi", false);
       preferences.putBool("modeClock", clockEnabled);
       preferences.putBool("modeText", textEnabled);
       preferences.putInt("modeInterval", interval);
       preferences.end();
-      
+
       response = "{\"success\":true}";
       Serial.println("[API]   Modos guardados");
     }
@@ -780,13 +780,6 @@ void setupDNS() {
   } else {
     Serial.println("[DNS] ERROR: No se pudo iniciar DNS");
   }
-}
-
-unsigned long showIPUntil = 0;
-
-void showIPOnDMD() {
-  Serial.println("[DMD] IP sera mostrada durante 10 segundos...");
-  showIPUntil = millis() + 10000;
 }
 
 void setup() {
@@ -825,7 +818,7 @@ void setup() {
 
   dma_display->setTextColor(65535);
   dma_display->fillScreen(0);
-  dma_display->setBrightness(25);
+  dma_display->setBrightness(BRIGHTNESS);
 
   initWiFiManager();
   delay(100);
@@ -833,7 +826,6 @@ void setup() {
   delay(100);
   if (wifiConnected) {
     syncNTP();
-    showIPOnDMD();
   } else {
     setupDNS();
   }
@@ -852,8 +844,6 @@ void loop() {
       dnsServer.stop();
       Serial.println("[LOOP] DNS detenido");
       syncNTP();
-      // Mostrar IP en el DMD
-      showIPOnDMD();
     } else if (millis() - wifiConnectAttempt > 30000) {
       if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
         Serial.println("[LOOP] Reintentando WiFi...");
@@ -866,61 +856,46 @@ void loop() {
 
   dma_display->fillScreen(0);
 
-  // Show WiFi info on connect
-  if (showIPUntil > millis()) {
-    dma_display->setTextSize(1);
-    dma_display->setTextColor(dma_display->color565(0, 255, 0)); // Verde
+  // Update mode logic if multiple modes enabled
+  if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
+    updateMode();
+  }
 
-    String ssidStr = WiFi.SSID();
-    String ipStr = WiFi.localIP().toString();
+  // Display based on current mode
+  if (currentMode == 0 && modeClockEnabled && wifiConnected) {
+    displayClock();
+  } else if (currentMode == 1 && modeTextEnabled) {
+    // Show scroll text
+    dma_display->setTextSize(2);
+    dma_display->setTextWrap(false);
+    uint16_t currentColor = hsvToRGB(colorHue);
+    dma_display->setTextColor(currentColor);
 
-    dma_display->setCursor(2, 5);
-    dma_display->print(ssidStr);
+    int textWidth = calculateTextWidth(scrollText.c_str(), 2);
+    dma_display->setCursor(textScrollX, 8);
+    dma_display->print(scrollText.c_str());
 
-    dma_display->setCursor(2, 15);
-    dma_display->print(ipStr);
-  } else {
-    // Update mode logic if multiple modes enabled
-    if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
-      updateMode();
-    }
+    textScrollX -= 1;
+    if (textScrollX < -textWidth) textScrollX = 128;
 
-    // Display based on current mode
-    if (currentMode == 0 && modeClockEnabled && wifiConnected) {
-      displayClock();
-    } else if (currentMode == 1 && modeTextEnabled) {
-      // Show scroll text
-      dma_display->setTextSize(2);
-      dma_display->setTextWrap(false);
-      uint16_t currentColor = hsvToRGB(colorHue);
-      dma_display->setTextColor(currentColor);
+    colorHue += 1.0;
+    if (colorHue >= 360.0) colorHue = 0.0;
+  } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
+    // Show text if clock is selected but no WiFi
+    dma_display->setTextSize(2);
+    dma_display->setTextWrap(false);
+    uint16_t currentColor = hsvToRGB(colorHue);
+    dma_display->setTextColor(currentColor);
 
-      int textWidth = calculateTextWidth(scrollText.c_str(), 2);
-      dma_display->setCursor(textScrollX, 8);
-      dma_display->print(scrollText.c_str());
+    int textWidth = calculateTextWidth(scrollText.c_str(), 2);
+    dma_display->setCursor(textScrollX, 8);
+    dma_display->print(scrollText.c_str());
 
-      textScrollX -= 1;
-      if (textScrollX < -textWidth) textScrollX = 128;
+    textScrollX -= 1;
+    if (textScrollX < -textWidth) textScrollX = 128;
 
-      colorHue += 1.0;
-      if (colorHue >= 360.0) colorHue = 0.0;
-    } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
-      // Show text if clock is selected but no WiFi
-      dma_display->setTextSize(2);
-      dma_display->setTextWrap(false);
-      uint16_t currentColor = hsvToRGB(colorHue);
-      dma_display->setTextColor(currentColor);
-
-      int textWidth = calculateTextWidth(scrollText.c_str(), 2);
-      dma_display->setCursor(textScrollX, 8);
-      dma_display->print(scrollText.c_str());
-
-      textScrollX -= 1;
-      if (textScrollX < -textWidth) textScrollX = 128;
-
-      colorHue += 1.0;
-      if (colorHue >= 360.0) colorHue = 0.0;
-    }
+    colorHue += 1.0;
+    if (colorHue >= 360.0) colorHue = 0.0;
   }
 
   delay(50);
