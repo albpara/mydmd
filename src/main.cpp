@@ -172,6 +172,8 @@ void loop() {
       dnsServer.stop();
       Serial.println("[LOOP] DNS detenido");
       syncNTP();
+      // Immediately attempt MQTT connection now that WiFi is up
+      connectMqtt();
     } else if (millis() - wifiConnectAttempt > 30000) {
       if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
         Serial.println("[LOOP] Reintentando WiFi...");

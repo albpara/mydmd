@@ -30,6 +30,8 @@ String mqttTopicPrefix = "retropixel";
 bool mqttConnected = false;
 uint32_t lastMqttReconnect = 0;
 const uint32_t MQTT_RECONNECT_INTERVAL = 5000; // 5 seconds
+uint32_t lastMqttStatePublish = 0;
+const uint32_t MQTT_STATE_PUBLISH_INTERVAL = 30000; // 30 seconds
 
 // Device identifiers for Home Assistant
 String deviceId = "";
@@ -39,6 +41,7 @@ void initializeDeviceId();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 void publishHomeAssistantDiscovery();
 void publishDisplayStatus();
+void publishModeStates();
 void connectMqtt();
 
 // Initialize device ID from MAC address
@@ -122,6 +125,50 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+// Publish current display status
+void publishDisplayStatus() {
+  if (!mqttClient || !mqttClient->connected()) {
+    return;
+  }
+
+  String stateTopic = mqttTopicPrefix + "/display/state";
+  String state = (displayBrightness > 0) ? "ON" : "OFF";
+  
+  mqttClient->publish(stateTopic.c_str(), state.c_str(), true);
+  Serial.println("[MQTT] Published state [" + state + "] to " + stateTopic);
+}
+
+// Publish current mode states and durations
+void publishModeStates() {
+  if (!mqttClient || !mqttClient->connected()) {
+    return;
+  }
+
+  // Publish clock mode state
+  String clockStateStr = modeClockEnabled ? "ON" : "OFF";
+  mqttClient->publish((mqttTopicPrefix + "/modes/clock/state").c_str(), clockStateStr.c_str(), true);
+  
+  // Publish text mode state
+  String textStateStr = modeTextEnabled ? "ON" : "OFF";
+  mqttClient->publish((mqttTopicPrefix + "/modes/text/state").c_str(), textStateStr.c_str(), true);
+  
+  // Publish clock duration
+  mqttClient->publish(
+    (mqttTopicPrefix + "/modes/clockDuration/state").c_str(), 
+    String(modeClockDuration).c_str(), 
+    true
+  );
+  
+  // Publish text duration
+  mqttClient->publish(
+    (mqttTopicPrefix + "/modes/textDuration/state").c_str(), 
+    String(modeTextDuration).c_str(), 
+    true
+  );
+
+  Serial.println("[MQTT] Mode states published");
+}
+
 // Publish Home Assistant MQTT Discovery messages
 void publishHomeAssistantDiscovery() {
   if (!mqttClient) {
@@ -145,49 +192,85 @@ void publishHomeAssistantDiscovery() {
   deviceInfo += "\"sw_version\":\"1.0.0\"";
   deviceInfo += "}";
 
-  // Discovery for power/display toggle
-  String discoveryTopic = "homeassistant/light/" + deviceId + "/display/config";
-  String discoveryPayload = "{";
-  discoveryPayload += "\"name\":\"Display\",";
-  discoveryPayload += "\"unique_id\":\"retropixel_" + deviceId + "_display\",";
-  discoveryPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/display/state\",";
-  discoveryPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/display/power/set\",";
-  discoveryPayload += "\"payload_on\":\"ON\",";
-  discoveryPayload += "\"payload_off\":\"OFF\",";
-  discoveryPayload += "\"device\":" + deviceInfo;
-  discoveryPayload += "}";
+  // 1. Discovery for power/display toggle (Light entity)
+  String displayTopic = "homeassistant/light/" + deviceId + "/display/config";
+  String displayPayload = "{";
+  displayPayload += "\"name\":\"Display\",";
+  displayPayload += "\"unique_id\":\"retropixel_" + deviceId + "_display\",";
+  displayPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/display/state\",";
+  displayPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/display/power/set\",";
+  displayPayload += "\"payload_on\":\"ON\",";
+  displayPayload += "\"payload_off\":\"OFF\",";
+  displayPayload += "\"device\":" + deviceInfo;
+  displayPayload += "}";
+  mqttClient->publish(displayTopic.c_str(), displayPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Display discovery published");
 
-  Serial.println("[MQTT] Discovery topic: " + discoveryTopic);
-  Serial.println("[MQTT] Discovery payload size: " + String(discoveryPayload.length()) + " bytes");
-  Serial.println("[MQTT] Publishing discovery...");
-  
-  bool published = mqttClient->publish(discoveryTopic.c_str(), discoveryPayload.c_str(), true);
-  if (published) {
-    Serial.println("[MQTT] ✓ Discovery message published successfully");
-  } else {
-    int state = mqttClient->state();
-    Serial.println("[MQTT] ✗ FAILED to publish discovery message");
-    Serial.println("[MQTT] Client state: " + String(state));
-    if (state != 0) {
-      Serial.println("[MQTT] (0=connected, 1=bad protocol, 2=bad client ID, 3=unavailable, 4=bad credentials, 5=unauthorized)");
-    }
-  }
+  // 2. Discovery for Clock Mode (Switch entity)
+  String clockModeTopic = "homeassistant/switch/" + deviceId + "/clock_mode/config";
+  String clockModePayload = "{";
+  clockModePayload += "\"name\":\"Clock Mode\",";
+  clockModePayload += "\"unique_id\":\"retropixel_" + deviceId + "_clock_mode\",";
+  clockModePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/clock/state\",";
+  clockModePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/clock/set\",";
+  clockModePayload += "\"payload_on\":\"ON\",";
+  clockModePayload += "\"payload_off\":\"OFF\",";
+  clockModePayload += "\"device\":" + deviceInfo;
+  clockModePayload += "}";
+  mqttClient->publish(clockModeTopic.c_str(), clockModePayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Clock mode discovery published");
 
-  // Publish initial state
+  // 3. Discovery for Text Mode (Switch entity)
+  String textModeTopic = "homeassistant/switch/" + deviceId + "/text_mode/config";
+  String textModePayload = "{";
+  textModePayload += "\"name\":\"Text Mode\",";
+  textModePayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_mode\",";
+  textModePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/text/state\",";
+  textModePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/text/set\",";
+  textModePayload += "\"payload_on\":\"ON\",";
+  textModePayload += "\"payload_off\":\"OFF\",";
+  textModePayload += "\"device\":" + deviceInfo;
+  textModePayload += "}";
+  mqttClient->publish(textModeTopic.c_str(), textModePayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Text mode discovery published");
+
+  // 4. Discovery for Clock Duration (Number entity - Configuration)
+  String clockDurTopic = "homeassistant/number/" + deviceId + "/clock_duration/config";
+  String clockDurPayload = "{";
+  clockDurPayload += "\"name\":\"Clock Duration\",";
+  clockDurPayload += "\"unique_id\":\"retropixel_" + deviceId + "_clock_duration\",";
+  clockDurPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/clockDuration/state\",";
+  clockDurPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/clockDuration/set\",";
+  clockDurPayload += "\"unit_of_measurement\":\"s\",";
+  clockDurPayload += "\"entity_category\":\"config\",";
+  clockDurPayload += "\"min\":1,";
+  clockDurPayload += "\"max\":300,";
+  clockDurPayload += "\"step\":1,";
+  clockDurPayload += "\"device\":" + deviceInfo;
+  clockDurPayload += "}";
+  mqttClient->publish(clockDurTopic.c_str(), clockDurPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Clock duration discovery published");
+
+  // 5. Discovery for Text Duration (Number entity - Configuration)
+  String textDurTopic = "homeassistant/number/" + deviceId + "/text_duration/config";
+  String textDurPayload = "{";
+  textDurPayload += "\"name\":\"Text Duration\",";
+  textDurPayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_duration\",";
+  textDurPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/textDuration/state\",";
+  textDurPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/textDuration/set\",";
+  textDurPayload += "\"unit_of_measurement\":\"s\",";
+  textDurPayload += "\"entity_category\":\"config\",";
+  textDurPayload += "\"min\":1,";
+  textDurPayload += "\"max\":300,";
+  textDurPayload += "\"step\":1,";
+  textDurPayload += "\"device\":" + deviceInfo;
+  textDurPayload += "}";
+  mqttClient->publish(textDurTopic.c_str(), textDurPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Text duration discovery published");
+
+  // Publish initial states
   publishDisplayStatus();
-}
-
-// Publish current display status
-void publishDisplayStatus() {
-  if (!mqttClient || !mqttClient->connected()) {
-    return;
-  }
-
-  String stateTopic = mqttTopicPrefix + "/display/state";
-  String state = (displayBrightness > 0) ? "ON" : "OFF";
-  
-  mqttClient->publish(stateTopic.c_str(), state.c_str(), true);
-  Serial.println("[MQTT] Published state [" + state + "] to " + stateTopic);
+  publishModeStates();
 }
 
 // Connect to MQTT broker
@@ -352,6 +435,12 @@ void processMqtt() {
 
   if (mqttClient->connected()) {
     mqttClient->loop();
+    
+    // Periodically publish mode states for HA sync
+    if (millis() - lastMqttStatePublish > MQTT_STATE_PUBLISH_INTERVAL) {
+      lastMqttStatePublish = millis();
+      publishModeStates();
+    }
   } else {
     // Attempt reconnect periodically
     if (millis() - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
