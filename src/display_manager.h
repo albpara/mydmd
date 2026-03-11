@@ -11,6 +11,10 @@ extern String scrollText;
 extern bool wifiConnected;
 extern float colorHue;
 extern int textScrollX;
+extern String serviceText;
+extern bool serviceTextActive;
+extern uint32_t serviceTextStartTime;
+extern uint16_t serviceTextDuration;
 
 // Convert HSV color to RGB 565
 uint16_t hsvToRGB(float hue) {
@@ -98,6 +102,47 @@ void displayClock() {
 
   dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
   dma_display->print(timeStr);
+}
+
+// Display service text (called from MQTT command)
+void displayServiceText() {
+  if (!serviceTextActive || serviceText.length() == 0) {
+    return;
+  }
+
+  // Check if duration has expired
+  uint32_t elapsedMs = millis() - serviceTextStartTime;
+  if (elapsedMs > (serviceTextDuration * 1000UL)) {
+    serviceTextActive = false;
+    return;
+  }
+
+  dma_display->setTextSize(2);  // Font size 2 as requested
+  dma_display->setTextWrap(false);
+  
+  // Cyan color for service text
+  dma_display->setTextColor(dma_display->color565(0, 255, 255));
+
+  // Calculate text width (approximate: 6 pixels per character at size 2)
+  int textWidth = serviceText.length() * 12;  // 6 * 2 = 12 pixels per char at size 2
+  
+  if (textWidth > PANEL_WIDTH) {
+    // Text is larger than panel, scroll it
+    static int serviceTextScrollX = PANEL_WIDTH;
+    dma_display->setCursor(serviceTextScrollX, DISPLAY_Y_OFFSET);
+    dma_display->print(serviceText.c_str());
+    
+    serviceTextScrollX -= SCROLL_SPEED;
+    if (serviceTextScrollX < -textWidth) {
+      serviceTextScrollX = PANEL_WIDTH;  // Reset for next cycle
+    }
+  } else {
+    // Text fits on panel, center it
+    int centerX = (PANEL_WIDTH * 2 - textWidth) / 2;
+    centerX = max(0, centerX);
+    dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
+    dma_display->print(serviceText.c_str());
+  }
 }
 
 #endif // DISPLAY_MANAGER_H

@@ -45,6 +45,12 @@ unsigned long lastModeChange = 0;
 // Display brightness control (MQTT)
 int displayBrightness = BRIGHTNESS;
 
+// Text service variables
+String serviceText = "";
+uint16_t serviceTextDuration = 0;
+bool serviceTextActive = false;
+uint32_t serviceTextStartTime = 0;
+
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 float colorHue = 0.0;
@@ -192,19 +198,24 @@ void loop() {
 
   dma_display->fillScreen(0);
 
-  // Update mode logic if multiple modes enabled
-  if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
-    updateMode();
-  }
+  // Display service text if active (takes priority)
+  if (serviceTextActive && serviceText.length() > 0) {
+    displayServiceText();
+  } else {
+    // Update mode logic if multiple modes enabled
+    if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
+      updateMode();
+    }
 
-  // Display based on current mode
-  if (currentMode == 0 && modeClockEnabled && wifiConnected) {
-    displayClock();
-  } else if (currentMode == 1 && modeTextEnabled) {
-    displayScrollText();
-  } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
-    // Show text if clock is selected but no WiFi
-    displayScrollText();
+    // Display based on current mode
+    if (currentMode == 0 && modeClockEnabled && wifiConnected) {
+      displayClock();
+    } else if (currentMode == 1 && modeTextEnabled) {
+      displayScrollText();
+    } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
+      // Show text if clock is selected but no WiFi
+      displayScrollText();
+    }
   }
 
   delay(LOOP_DELAY_MS);

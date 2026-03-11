@@ -18,6 +18,10 @@ extern bool modeClockEnabled;
 extern bool modeTextEnabled;
 extern uint16_t modeClockDuration;
 extern uint16_t modeTextDuration;
+extern String serviceText;
+extern uint16_t serviceTextDuration;
+extern bool serviceTextActive;
+extern uint32_t serviceTextStartTime;
 
 // MQTT variables
 PubSubClient *mqttClient = nullptr;
@@ -37,6 +41,7 @@ const uint32_t MQTT_DIAG_PUBLISH_INTERVAL = 60000; // 60 seconds
 
 // Device identifiers for Home Assistant
 String deviceId = "";
+bool pendingReboot = false;
 
 // Forward declare functions
 void initializeDeviceId();
@@ -127,13 +132,55 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
   }
   
+  // Text service: retropixel/text/set (JSON: {"text": "message", "duration": seconds})
+  else if (topicStr.endsWith("/text/set")) {
+    Serial.println("[MQTT] Text service command: " + payloadStr);
+    
+    // Simple JSON parsing for text and duration
+    int textStart = payloadStr.indexOf("\"text\"");
+    int durationStart = payloadStr.indexOf("\"duration\"");
+    
+    if (textStart >= 0) {
+      // Extract text value
+      int colonPos = payloadStr.indexOf(':', textStart);
+      int quoteStart = payloadStr.indexOf('"', colonPos) + 1;
+      int quoteEnd = payloadStr.indexOf('"', quoteStart);
+      
+      if (quoteStart > 0 && quoteEnd > quoteStart) {
+        serviceText = payloadStr.substring(quoteStart, quoteEnd);
+        Serial.println("[MQTT] Text to display: " + serviceText);
+      }
+    }
+    
+    if (durationStart >= 0) {
+      // Extract duration value
+      int colonPos = payloadStr.indexOf(':', durationStart);
+      int numStart = colonPos + 1;
+      int numEnd = payloadStr.indexOf(',', numStart);
+      if (numEnd < 0) numEnd = payloadStr.indexOf('}', numStart);
+      
+      if (numStart > 0 && numEnd > numStart) {
+        String durStr = payloadStr.substring(numStart, numEnd);
+        durStr.trim();
+        uint16_t dur = atoi(durStr.c_str());
+        if (dur >= 1 && dur <= 3600) {
+          serviceTextDuration = dur;
+          Serial.println("[MQTT] Text duration: " + String(dur) + "s");
+        }
+      }
+    }
+    
+    if (serviceText.length() > 0 && serviceTextDuration > 0) {
+      serviceTextActive = true;
+      serviceTextStartTime = millis();
+      Serial.println("[MQTT] Text service activated!");
+    }
+  }
+  
   // Reboot command: retropixel/system/reboot
   else if (topicStr.endsWith("/system/reboot")) {
-    if (payloadStr == "ON" || payloadStr == "true") {
-      Serial.println("[MQTT] Reboot command received!");
-      delay(1000);
-      ESP.restart();
-    }
+    Serial.println("[MQTT] Reboot command received! Payload: " + payloadStr);
+    pendingReboot = true;
   }
 }
 
@@ -364,6 +411,19 @@ void publishHomeAssistantDiscovery() {
   mqttClient->publish(rebootTopic.c_str(), rebootPayload.c_str(), true);
   Serial.println("[MQTT] ✓ Reboot button discovery published");
 
+  // 10. Discovery for Text Display Service (Command topic)
+  String textServiceTopic = "homeassistant/text/" + deviceId + "/text_service/config";
+  String textServicePayload = "{";
+  textServicePayload += "\"name\":\"Display Text\",";
+  textServicePayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_service\",";
+  textServicePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/text/set\",";
+  textServicePayload += "\"entity_category\":\"config\",";
+  textServicePayload += "\"icon\":\"mdi:message\",";
+  textServicePayload += "\"device\":" + deviceInfo;
+  textServicePayload += "}";
+  mqttClient->publish(textServiceTopic.c_str(), textServicePayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Text service discovery published");
+
   // Publish initial states
   publishDisplayStatus();
   publishModeStates();
@@ -436,6 +496,16 @@ void connectMqtt() {
     String textDurTopic = mqttTopicPrefix + "/modes/textDuration/set";
     mqttClient->subscribe(textDurTopic.c_str());
     Serial.println("[MQTT] Subscribed to: " + textDurTopic);
+    
+    // Subscribe to text service
+    String textServiceTopic = mqttTopicPrefix + "/text/set";
+    mqttClient->subscribe(textServiceTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + textServiceTopic);
+    
+    // Subscribe to system topics
+    String rebootTopic = mqttTopicPrefix + "/system/reboot";
+    mqttClient->subscribe(rebootTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + rebootTopic);
 
     // Publish discovery
     publishHomeAssistantDiscovery();
@@ -522,6 +592,13 @@ void updateMqttSettings(String broker, uint16_t port, String username, String pa
 
 // Process MQTT in main loop
 void processMqtt() {
+  // Check for pending reboot command
+  if (pendingReboot) {
+    Serial.println("[MQTT] Executing reboot...");
+    delay(500);
+    ESP.restart();
+  }
+
   if (!wifiConnected) {
     return;
   }
