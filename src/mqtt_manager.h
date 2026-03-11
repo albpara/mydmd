@@ -11,7 +11,6 @@ extern WiFiClient espClient;
 extern String scrollText;
 extern bool wifiConnected;
 extern int displayBrightness;
-extern uint8_t displayMode;
 extern MatrixPanel_I2S_DMA *dma_display;
 extern Preferences preferences;
 extern bool modeClockEnabled;
@@ -63,109 +62,86 @@ void initializeDeviceId() {
 
 // MQTT callback handler for incoming messages
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String topicStr = String(topic);
-  String payloadStr = "";
-  for (unsigned int i = 0; i < length; i++) {
-    payloadStr += (char)payload[i];
-  }
+  // Null-terminate payload in stack buffer
+  char msg[256];
+  unsigned int copyLen = (length < sizeof(msg) - 1) ? length : sizeof(msg) - 1;
+  memcpy(msg, payload, copyLen);
+  msg[copyLen] = '\0';
 
-  Serial.println("[MQTT] Received on " + topicStr + ": " + payloadStr);
+  Serial.printf("[MQTT] %s: %s\n", topic, msg);
 
-  // Control topic: retropixel/display/power (on/off)
-  if (topicStr.endsWith("/power/set")) {
-    if (payloadStr == "ON" || payloadStr == "on") {
-      displayBrightness = 16; // Resume brightness
-      Serial.println("[MQTT] Display ON");
-    } else if (payloadStr == "OFF" || payloadStr == "off") {
-      displayBrightness = 0; // Turn off
-      if (dma_display) {
-        dma_display->fillScreen(0);
-      }
-      Serial.println("[MQTT] Display OFF");
+  // Control topic: power (on/off)
+  if (strstr(topic, "/power/set")) {
+    if (strcasecmp(msg, "ON") == 0) {
+      displayBrightness = 16;
+    } else {
+      displayBrightness = 0;
+      if (dma_display) dma_display->fillScreen(0);
     }
     publishDisplayStatus();
   }
-  
-  // Mode control: retropixel/modes/clock/set (on/off)
-  else if (topicStr.endsWith("/modes/clock/set")) {
-    modeClockEnabled = (payloadStr == "ON" || payloadStr == "on");
-    Serial.println("[MQTT] Clock mode: " + String(modeClockEnabled ? "ON" : "OFF"));
+  // Mode control: clock
+  else if (strstr(topic, "/modes/clock/set")) {
+    modeClockEnabled = (strcasecmp(msg, "ON") == 0);
     preferences.begin("wifi", false);
     preferences.putBool("modeClock", modeClockEnabled);
     preferences.end();
   }
-  
-  // Mode control: retropixel/modes/text/set (on/off)
-  else if (topicStr.endsWith("/modes/text/set")) {
-    modeTextEnabled = (payloadStr == "ON" || payloadStr == "on");
-    Serial.println("[MQTT] Text mode: " + String(modeTextEnabled ? "ON" : "OFF"));
+  // Mode control: text
+  else if (strstr(topic, "/modes/text/set")) {
+    modeTextEnabled = (strcasecmp(msg, "ON") == 0);
     preferences.begin("wifi", false);
     preferences.putBool("modeText", modeTextEnabled);
     preferences.end();
   }
-  
-  // Duration control: retropixel/modes/clockDuration/set (seconds)
-  else if (topicStr.endsWith("/modes/clockDuration/set")) {
-    int dur = atoi(payloadStr.c_str());
+  // Duration control: clock
+  else if (strstr(topic, "/modes/clockDuration/set")) {
+    int dur = atoi(msg);
     if (dur >= 1 && dur <= 300) {
       modeClockDuration = dur;
-      Serial.println("[MQTT] Clock duration: " + String(dur) + "s");
       preferences.begin("wifi", false);
       preferences.putInt("clockDur", dur);
       preferences.end();
-    } else {
-      Serial.println("[MQTT] Invalid clock duration: " + payloadStr);
     }
   }
-  
-  // Duration control: retropixel/modes/textDuration/set (seconds)
-  else if (topicStr.endsWith("/modes/textDuration/set")) {
-    int dur = atoi(payloadStr.c_str());
+  // Duration control: text
+  else if (strstr(topic, "/modes/textDuration/set")) {
+    int dur = atoi(msg);
     if (dur >= 1 && dur <= 300) {
       modeTextDuration = dur;
-      Serial.println("[MQTT] Text duration: " + String(dur) + "s");
       preferences.begin("wifi", false);
       preferences.putInt("textDur", dur);
       preferences.end();
-    } else {
-      Serial.println("[MQTT] Invalid text duration: " + payloadStr);
     }
   }
-  
-  // Text service: retropixel/text/set (JSON: {"text": "message", "duration": seconds})
-  else if (topicStr.endsWith("/text/set")) {
-    Serial.println("[MQTT] Text service command: " + payloadStr);
+  // Text service: JSON {"text": "message", "duration": seconds}
+  else if (strstr(topic, "/text/set")) {
+    // Simple C-string JSON parsing
+    char* textStart = strstr(msg, "\"text\"");
+    char* durStart = strstr(msg, "\"duration\"");
     
-    // Simple JSON parsing for text and duration
-    int textStart = payloadStr.indexOf("\"text\"");
-    int durationStart = payloadStr.indexOf("\"duration\"");
-    
-    if (textStart >= 0) {
-      // Extract text value
-      int colonPos = payloadStr.indexOf(':', textStart);
-      int quoteStart = payloadStr.indexOf('"', colonPos) + 1;
-      int quoteEnd = payloadStr.indexOf('"', quoteStart);
-      
-      if (quoteStart > 0 && quoteEnd > quoteStart) {
-        serviceText = payloadStr.substring(quoteStart, quoteEnd);
-        Serial.println("[MQTT] Text to display: " + serviceText);
+    if (textStart) {
+      char* colon = strchr(textStart, ':');
+      if (colon) {
+        char* q1 = strchr(colon, '"');
+        if (q1) {
+          q1++;
+          char* q2 = strchr(q1, '"');
+          if (q2) {
+            *q2 = '\0';
+            serviceText = String(q1);
+            *q2 = '"'; // restore
+          }
+        }
       }
     }
     
-    if (durationStart >= 0) {
-      // Extract duration value
-      int colonPos = payloadStr.indexOf(':', durationStart);
-      int numStart = colonPos + 1;
-      int numEnd = payloadStr.indexOf(',', numStart);
-      if (numEnd < 0) numEnd = payloadStr.indexOf('}', numStart);
-      
-      if (numStart > 0 && numEnd > numStart) {
-        String durStr = payloadStr.substring(numStart, numEnd);
-        durStr.trim();
-        uint16_t dur = atoi(durStr.c_str());
+    if (durStart) {
+      char* colon = strchr(durStart, ':');
+      if (colon) {
+        uint16_t dur = atoi(colon + 1);
         if (dur >= 1 && dur <= 3600) {
           serviceTextDuration = dur;
-          Serial.println("[MQTT] Text duration: " + String(dur) + "s");
         }
       }
     }
@@ -173,256 +149,176 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (serviceText.length() > 0 && serviceTextDuration > 0) {
       serviceTextActive = true;
       serviceTextStartTime = millis();
-      Serial.println("[MQTT] Text service activated!");
     }
   }
-  
-  // Reboot command: retropixel/system/reboot
-  else if (topicStr.endsWith("/system/reboot")) {
-    Serial.println("[MQTT] Reboot command received! Payload: " + payloadStr);
+  // Reboot command
+  else if (strstr(topic, "/system/reboot")) {
     pendingReboot = true;
   }
 }
 
 // Publish current display status
 void publishDisplayStatus() {
-  if (!mqttClient || !mqttClient->connected()) {
-    return;
-  }
-
-  String stateTopic = mqttTopicPrefix + "/display/state";
-  String state = (displayBrightness > 0) ? "ON" : "OFF";
-  
-  mqttClient->publish(stateTopic.c_str(), state.c_str(), true);
-  Serial.println("[MQTT] Published state [" + state + "] to " + stateTopic);
+  if (!mqttClient || !mqttClient->connected()) return;
+  char topic[60];
+  snprintf(topic, sizeof(topic), "%s/display/state", mqttTopicPrefix.c_str());
+  mqttClient->publish(topic, displayBrightness > 0 ? "ON" : "OFF", true);
 }
 
 // Publish current mode states and durations
 void publishModeStates() {
-  if (!mqttClient || !mqttClient->connected()) {
-    return;
-  }
+  if (!mqttClient || !mqttClient->connected()) return;
+  char topic[60];
+  char val[8];
+  const char* pfx = mqttTopicPrefix.c_str();
 
-  // Publish clock mode state
-  String clockStateStr = modeClockEnabled ? "ON" : "OFF";
-  mqttClient->publish((mqttTopicPrefix + "/modes/clock/state").c_str(), clockStateStr.c_str(), true);
+  snprintf(topic, sizeof(topic), "%s/modes/clock/state", pfx);
+  mqttClient->publish(topic, modeClockEnabled ? "ON" : "OFF", true);
   
-  // Publish text mode state
-  String textStateStr = modeTextEnabled ? "ON" : "OFF";
-  mqttClient->publish((mqttTopicPrefix + "/modes/text/state").c_str(), textStateStr.c_str(), true);
+  snprintf(topic, sizeof(topic), "%s/modes/text/state", pfx);
+  mqttClient->publish(topic, modeTextEnabled ? "ON" : "OFF", true);
   
-  // Publish clock duration
-  mqttClient->publish(
-    (mqttTopicPrefix + "/modes/clockDuration/state").c_str(), 
-    String(modeClockDuration).c_str(), 
-    true
-  );
+  snprintf(topic, sizeof(topic), "%s/modes/clockDuration/state", pfx);
+  snprintf(val, sizeof(val), "%u", modeClockDuration);
+  mqttClient->publish(topic, val, true);
   
-  // Publish text duration
-  mqttClient->publish(
-    (mqttTopicPrefix + "/modes/textDuration/state").c_str(), 
-    String(modeTextDuration).c_str(), 
-    true
-  );
-
-  Serial.println("[MQTT] Mode states published");
+  snprintf(topic, sizeof(topic), "%s/modes/textDuration/state", pfx);
+  snprintf(val, sizeof(val), "%u", modeTextDuration);
+  mqttClient->publish(topic, val, true);
 }
 
-// Publish diagnostic information (IP, uptime, link quality)
+// Publish diagnostic information
 void publishDiagnostics() {
-  if (!mqttClient || !mqttClient->connected()) {
-    return;
-  }
+  if (!mqttClient || !mqttClient->connected()) return;
+  char topic[60];
+  char val[20];
+  const char* pfx = mqttTopicPrefix.c_str();
 
-  // Publish IP address
-  String ipAddr = WiFi.localIP().toString();
-  mqttClient->publish((mqttTopicPrefix + "/system/ip/state").c_str(), ipAddr.c_str(), true);
+  snprintf(topic, sizeof(topic), "%s/system/ip/state", pfx);
+  mqttClient->publish(topic, WiFi.localIP().toString().c_str(), true);
   
-  // Publish uptime in seconds
-  uint32_t uptimeSeconds = millis() / 1000;
-  mqttClient->publish(
-    (mqttTopicPrefix + "/system/uptime/state").c_str(), 
-    String(uptimeSeconds).c_str(), 
-    true
-  );
+  snprintf(topic, sizeof(topic), "%s/system/uptime/state", pfx);
+  snprintf(val, sizeof(val), "%lu", millis() / 1000);
+  mqttClient->publish(topic, val, true);
   
-  // Publish link quality (WiFi RSSI in dBm)
-  int32_t rssi = WiFi.RSSI();
-  mqttClient->publish(
-    (mqttTopicPrefix + "/system/link_quality/state").c_str(), 
-    String(rssi).c_str(), 
-    true
-  );
-
-  Serial.println("[MQTT] Diagnostics published - IP: " + ipAddr + " | Uptime: " + String(uptimeSeconds) + "s | RSSI: " + String(rssi) + "dBm");
+  snprintf(topic, sizeof(topic), "%s/system/link_quality/state", pfx);
+  snprintf(val, sizeof(val), "%d", WiFi.RSSI());
+  mqttClient->publish(topic, val, true);
 }
 
 // Publish Home Assistant MQTT Discovery messages
 void publishHomeAssistantDiscovery() {
-  if (!mqttClient) {
-    Serial.println("[MQTT] Discovery: Client not initialized");
-    return;
-  }
-  
-  if (!mqttClient->connected()) {
-    Serial.println("[MQTT] Discovery: Not connected to broker");
-    return;
-  }
+  if (!mqttClient || !mqttClient->connected()) return;
 
-  Serial.println("[MQTT] Publishing Home Assistant Discovery");
+  Serial.println("[MQTT] Publishing HA Discovery");
 
-  // Device info object for all entities
-  String deviceInfo = "{";
-  deviceInfo += "\"identifiers\":[\"retropixel_" + deviceId + "\"],";
-  deviceInfo += "\"manufacturer\":\"RetroPixel\",";
-  deviceInfo += "\"model\":\"LED Matrix ESP32\",";
-  deviceInfo += "\"name\":\"RetroPixel LED\",";
-  deviceInfo += "\"sw_version\":\"1.0.0\"";
-  deviceInfo += "}";
+  const char* did = deviceId.c_str();
+  const char* pfx = mqttTopicPrefix.c_str();
 
-  // 1. Discovery for power/display toggle (Light entity)
-  String displayTopic = "homeassistant/light/" + deviceId + "/display/config";
-  String displayPayload = "{";
-  displayPayload += "\"name\":\"Display\",";
-  displayPayload += "\"unique_id\":\"retropixel_" + deviceId + "_display\",";
-  displayPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/display/state\",";
-  displayPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/display/power/set\",";
-  displayPayload += "\"payload_on\":\"ON\",";
-  displayPayload += "\"payload_off\":\"OFF\",";
-  displayPayload += "\"device\":" + deviceInfo;
-  displayPayload += "}";
-  mqttClient->publish(displayTopic.c_str(), displayPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Display discovery published");
+  // Reusable stack buffers
+  char topic[80];
+  char payload[512];
 
-  // 2. Discovery for Clock Mode (Switch entity)
-  String clockModeTopic = "homeassistant/switch/" + deviceId + "/clock_mode/config";
-  String clockModePayload = "{";
-  clockModePayload += "\"name\":\"Clock Mode\",";
-  clockModePayload += "\"unique_id\":\"retropixel_" + deviceId + "_clock_mode\",";
-  clockModePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/clock/state\",";
-  clockModePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/clock/set\",";
-  clockModePayload += "\"payload_on\":\"ON\",";
-  clockModePayload += "\"payload_off\":\"OFF\",";
-  clockModePayload += "\"device\":" + deviceInfo;
-  clockModePayload += "}";
-  mqttClient->publish(clockModeTopic.c_str(), clockModePayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Clock mode discovery published");
+  // Device info snippet (using HA abbreviated keys)
+  char dev[180];
+  snprintf(dev, sizeof(dev),
+    "\"dev\":{\"ids\":[\"rp_%s\"],"
+    "\"mf\":\"RetroPixel\","
+    "\"mdl\":\"LED Matrix ESP32\","
+    "\"name\":\"RetroPixel LED\","
+    "\"sw\":\"1.0\"}", did);
 
-  // 3. Discovery for Text Mode (Switch entity)
-  String textModeTopic = "homeassistant/switch/" + deviceId + "/text_mode/config";
-  String textModePayload = "{";
-  textModePayload += "\"name\":\"Text Mode\",";
-  textModePayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_mode\",";
-  textModePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/text/state\",";
-  textModePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/text/set\",";
-  textModePayload += "\"payload_on\":\"ON\",";
-  textModePayload += "\"payload_off\":\"OFF\",";
-  textModePayload += "\"device\":" + deviceInfo;
-  textModePayload += "}";
-  mqttClient->publish(textModeTopic.c_str(), textModePayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Text mode discovery published");
+  // 1. Display power (Light entity)
+  snprintf(topic, sizeof(topic), "homeassistant/light/%s/display/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Display\",\"uniq_id\":\"rp_%s_disp\","
+    "\"stat_t\":\"%s/display/state\","
+    "\"cmd_t\":\"%s/display/power/set\","
+    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 4. Discovery for Clock Duration (Number entity - Configuration)
-  String clockDurTopic = "homeassistant/number/" + deviceId + "/clock_duration/config";
-  String clockDurPayload = "{";
-  clockDurPayload += "\"name\":\"Clock Duration\",";
-  clockDurPayload += "\"unique_id\":\"retropixel_" + deviceId + "_clock_duration\",";
-  clockDurPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/clockDuration/state\",";
-  clockDurPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/clockDuration/set\",";
-  clockDurPayload += "\"unit_of_measurement\":\"s\",";
-  clockDurPayload += "\"entity_category\":\"config\",";
-  clockDurPayload += "\"min\":1,";
-  clockDurPayload += "\"max\":300,";
-  clockDurPayload += "\"step\":1,";
-  clockDurPayload += "\"device\":" + deviceInfo;
-  clockDurPayload += "}";
-  mqttClient->publish(clockDurTopic.c_str(), clockDurPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Clock duration discovery published");
+  // 2. Clock Mode (Switch)
+  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/clock_mode/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Clock Mode\",\"uniq_id\":\"rp_%s_clk\","
+    "\"stat_t\":\"%s/modes/clock/state\","
+    "\"cmd_t\":\"%s/modes/clock/set\","
+    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 5. Discovery for Text Duration (Number entity - Configuration)
-  String textDurTopic = "homeassistant/number/" + deviceId + "/text_duration/config";
-  String textDurPayload = "{";
-  textDurPayload += "\"name\":\"Text Duration\",";
-  textDurPayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_duration\",";
-  textDurPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/modes/textDuration/state\",";
-  textDurPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/modes/textDuration/set\",";
-  textDurPayload += "\"unit_of_measurement\":\"s\",";
-  textDurPayload += "\"entity_category\":\"config\",";
-  textDurPayload += "\"min\":1,";
-  textDurPayload += "\"max\":300,";
-  textDurPayload += "\"step\":1,";
-  textDurPayload += "\"device\":" + deviceInfo;
-  textDurPayload += "}";
-  mqttClient->publish(textDurTopic.c_str(), textDurPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Text duration discovery published");
+  // 3. Text Mode (Switch)
+  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/text_mode/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Text Mode\",\"uniq_id\":\"rp_%s_txt\","
+    "\"stat_t\":\"%s/modes/text/state\","
+    "\"cmd_t\":\"%s/modes/text/set\","
+    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 6. Discovery for IP Address (Diagnostic sensor)
-  String ipTopic = "homeassistant/sensor/" + deviceId + "/ip_address/config";
-  String ipPayload = "{";
-  ipPayload += "\"name\":\"IP Address\",";
-  ipPayload += "\"unique_id\":\"retropixel_" + deviceId + "_ip_address\",";
-  ipPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/ip/state\",";
-  ipPayload += "\"entity_category\":\"diagnostic\",";
-  ipPayload += "\"icon\":\"mdi:ip\",";
-  ipPayload += "\"device\":" + deviceInfo;
-  ipPayload += "}";
-  mqttClient->publish(ipTopic.c_str(), ipPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ IP address discovery published");
+  // 4. Clock Duration (Number entity - Config)
+  snprintf(topic, sizeof(topic), "homeassistant/number/%s/clock_dur/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Clock Duration\",\"uniq_id\":\"rp_%s_clkdur\","
+    "\"stat_t\":\"%s/modes/clockDuration/state\","
+    "\"cmd_t\":\"%s/modes/clockDuration/set\","
+    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
+    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 7. Discovery for Uptime (Diagnostic sensor)
-  String uptimeTopic = "homeassistant/sensor/" + deviceId + "/uptime/config";
-  String uptimePayload = "{";
-  uptimePayload += "\"name\":\"Uptime\",";
-  uptimePayload += "\"unique_id\":\"retropixel_" + deviceId + "_uptime\",";
-  uptimePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/uptime/state\",";
-  uptimePayload += "\"unit_of_measurement\":\"s\",";
-  uptimePayload += "\"entity_category\":\"diagnostic\",";
-  uptimePayload += "\"icon\":\"mdi:clock-outline\",";
-  uptimePayload += "\"device\":" + deviceInfo;
-  uptimePayload += "}";
-  mqttClient->publish(uptimeTopic.c_str(), uptimePayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Uptime discovery published");
+  // 5. Text Duration (Number entity - Config)
+  snprintf(topic, sizeof(topic), "homeassistant/number/%s/text_dur/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Text Duration\",\"uniq_id\":\"rp_%s_txtdur\","
+    "\"stat_t\":\"%s/modes/textDuration/state\","
+    "\"cmd_t\":\"%s/modes/textDuration/set\","
+    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
+    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 8. Discovery for Link Quality/RSSI (Diagnostic sensor)
-  String rssiTopic = "homeassistant/sensor/" + deviceId + "/link_quality/config";
-  String rssiPayload = "{";
-  rssiPayload += "\"name\":\"Link Quality\",";
-  rssiPayload += "\"unique_id\":\"retropixel_" + deviceId + "_link_quality\",";
-  rssiPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/link_quality/state\",";
-  rssiPayload += "\"unit_of_measurement\":\"dBm\",";
-  rssiPayload += "\"entity_category\":\"diagnostic\",";
-  rssiPayload += "\"icon\":\"mdi:signal\",";
-  rssiPayload += "\"device\":" + deviceInfo;
-  rssiPayload += "}";
-  mqttClient->publish(rssiTopic.c_str(), rssiPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Link quality discovery published");
+  // 6. IP Address (Diagnostic sensor)
+  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/ip/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"IP Address\",\"uniq_id\":\"rp_%s_ip\","
+    "\"stat_t\":\"%s/system/ip/state\","
+    "\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:ip\",%s}", did, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 9. Discovery for Reboot Button
-  String rebootTopic = "homeassistant/button/" + deviceId + "/reboot/config";
-  String rebootPayload = "{";
-  rebootPayload += "\"name\":\"Reboot\",";
-  rebootPayload += "\"unique_id\":\"retropixel_" + deviceId + "_reboot\",";
-  rebootPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/system/reboot\",";
-  rebootPayload += "\"payload_press\":\"true\",";
-  rebootPayload += "\"entity_category\":\"config\",";
-  rebootPayload += "\"icon\":\"mdi:restart\",";
-  rebootPayload += "\"device\":" + deviceInfo;
-  rebootPayload += "}";
-  mqttClient->publish(rebootTopic.c_str(), rebootPayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Reboot button discovery published");
+  // 7. Uptime (Diagnostic sensor)
+  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/uptime/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Uptime\",\"uniq_id\":\"rp_%s_up\","
+    "\"stat_t\":\"%s/system/uptime/state\","
+    "\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\","
+    "\"ic\":\"mdi:clock-outline\",%s}", did, pfx, dev);
+  mqttClient->publish(topic, payload, true);
 
-  // 10. Discovery for Text Display Service (Command topic)
-  String textServiceTopic = "homeassistant/text/" + deviceId + "/text_service/config";
-  String textServicePayload = "{";
-  textServicePayload += "\"name\":\"Display Text\",";
-  textServicePayload += "\"unique_id\":\"retropixel_" + deviceId + "_text_service\",";
-  textServicePayload += "\"command_topic\":\"" + mqttTopicPrefix + "/text/set\",";
-  textServicePayload += "\"entity_category\":\"config\",";
-  textServicePayload += "\"icon\":\"mdi:message\",";
-  textServicePayload += "\"device\":" + deviceInfo;
-  textServicePayload += "}";
-  mqttClient->publish(textServiceTopic.c_str(), textServicePayload.c_str(), true);
-  Serial.println("[MQTT] ✓ Text service discovery published");
+  // 8. Link Quality (Diagnostic sensor)
+  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/rssi/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Link Quality\",\"uniq_id\":\"rp_%s_rssi\","
+    "\"stat_t\":\"%s/system/link_quality/state\","
+    "\"unit_of_meas\":\"dBm\",\"ent_cat\":\"diagnostic\","
+    "\"ic\":\"mdi:signal\",%s}", did, pfx, dev);
+  mqttClient->publish(topic, payload, true);
+
+  // 9. Reboot Button
+  snprintf(topic, sizeof(topic), "homeassistant/button/%s/reboot/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Reboot\",\"uniq_id\":\"rp_%s_reboot\","
+    "\"cmd_t\":\"%s/system/reboot\","
+    "\"pl_press\":\"true\",\"ent_cat\":\"config\","
+    "\"ic\":\"mdi:restart\",%s}", did, pfx, dev);
+  mqttClient->publish(topic, payload, true);
+
+  // 10. Text Service
+  snprintf(topic, sizeof(topic), "homeassistant/text/%s/text_svc/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"Display Text\",\"uniq_id\":\"rp_%s_textsvc\","
+    "\"cmd_t\":\"%s/text/set\","
+    "\"ent_cat\":\"config\",\"ic\":\"mdi:message\",%s}", did, pfx, dev);
+  mqttClient->publish(topic, payload, true);
+
+  Serial.println("[MQTT] HA Discovery complete (10 entities)");
 
   // Publish initial states
   publishDisplayStatus();
@@ -475,55 +371,36 @@ void connectMqtt() {
     mqttConnected = true;
     Serial.println("[MQTT] Connected!");
 
-    // Subscribe to control topics
-    String powerSetTopic = mqttTopicPrefix + "/display/power/set";
-    mqttClient->subscribe(powerSetTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + powerSetTopic);
+    // Subscribe to control topics using stack buffer
+    char topic[60];
+    const char* pfx = mqttTopicPrefix.c_str();
     
-    // Subscribe to mode control topics
-    String clockModeTopic = mqttTopicPrefix + "/modes/clock/set";
-    mqttClient->subscribe(clockModeTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + clockModeTopic);
+    snprintf(topic, sizeof(topic), "%s/display/power/set", pfx);
+    mqttClient->subscribe(topic);
     
-    String textModeTopic = mqttTopicPrefix + "/modes/text/set";
-    mqttClient->subscribe(textModeTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + textModeTopic);
+    snprintf(topic, sizeof(topic), "%s/modes/clock/set", pfx);
+    mqttClient->subscribe(topic);
     
-    String clockDurTopic = mqttTopicPrefix + "/modes/clockDuration/set";
-    mqttClient->subscribe(clockDurTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + clockDurTopic);
+    snprintf(topic, sizeof(topic), "%s/modes/text/set", pfx);
+    mqttClient->subscribe(topic);
     
-    String textDurTopic = mqttTopicPrefix + "/modes/textDuration/set";
-    mqttClient->subscribe(textDurTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + textDurTopic);
+    snprintf(topic, sizeof(topic), "%s/modes/clockDuration/set", pfx);
+    mqttClient->subscribe(topic);
     
-    // Subscribe to text service
-    String textServiceTopic = mqttTopicPrefix + "/text/set";
-    mqttClient->subscribe(textServiceTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + textServiceTopic);
+    snprintf(topic, sizeof(topic), "%s/modes/textDuration/set", pfx);
+    mqttClient->subscribe(topic);
     
-    // Subscribe to system topics
-    String rebootTopic = mqttTopicPrefix + "/system/reboot";
-    mqttClient->subscribe(rebootTopic.c_str());
-    Serial.println("[MQTT] Subscribed to: " + rebootTopic);
+    snprintf(topic, sizeof(topic), "%s/text/set", pfx);
+    mqttClient->subscribe(topic);
+    
+    snprintf(topic, sizeof(topic), "%s/system/reboot", pfx);
+    mqttClient->subscribe(topic);
 
     // Publish discovery
     publishHomeAssistantDiscovery();
   } else {
     mqttConnected = false;
-    int state = mqttClient->state();
-    Serial.println("[MQTT] Connection failed, code: " + String(state));
-    switch(state) {
-      case -4: Serial.println("[MQTT] Error: Connection timeout"); break;
-      case -3: Serial.println("[MQTT] Error: Connection lost"); break;
-      case -2: Serial.println("[MQTT] Error: Connect failed"); break;
-      case -1: Serial.println("[MQTT] Error: Disconnected"); break;
-      case 1: Serial.println("[MQTT] Error: Bad protocol"); break;
-      case 2: Serial.println("[MQTT] Error: Bad client ID"); break;
-      case 3: Serial.println("[MQTT] Error: Unavailable"); break;
-      case 4: Serial.println("[MQTT] Error: Bad credentials"); break;
-      case 5: Serial.println("[MQTT] Error: Unauthorized"); break;
-    }
+    Serial.printf("[MQTT] Connection failed, code: %d\n", mqttClient->state());
   }
 }
 

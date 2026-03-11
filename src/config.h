@@ -27,15 +27,10 @@
 #define SCROLL_START_X 128
 #define SCROLL_SPEED 1
 
-// Loop and Network Configuration
+// Total display width (2 panels)
+#define DISPLAY_WIDTH (PANEL_WIDTH * 2)
+
+// Loop Configuration
 #define LOOP_DELAY_MS 50
-#define JSON_BUFFER_SIZE 256
-
-// Color Definitions (requires dma_display for color565)
-// Note: MAGENTA_COLOR is defined in main.cpp as it needs dma_display reference
-
-// Default Values
-#define DEFAULT_SCROLL_TEXT "MAXIMO Y VICTOR"
-#define DEFAULT_MODE_INTERVAL 10
 
 #endif // CONFIG_H

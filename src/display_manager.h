@@ -78,7 +78,7 @@ void displayScrollText() {
   dma_display->print(scrollText.c_str());
 
   textScrollX -= SCROLL_SPEED;
-  if (textScrollX < -textWidth) textScrollX = SCROLL_START_X;
+  if (textScrollX < -textWidth) textScrollX = DISPLAY_WIDTH;
 
   colorHue += 1.0;
   if (colorHue >= 360.0) colorHue = 0.0;
@@ -94,28 +94,21 @@ void displayClock() {
   strftime(timeStr, sizeof(timeStr), "%H:%M:%S", timeinfo);
 
   dma_display->setTextSize(TEXT_SIZE);
-  // Magenta color: RGB(255, 100, 255)
   dma_display->setTextColor(dma_display->color565(255, 100, 255));
 
-  // 10 chars * 12px + some padding, centered on 128px width
-  int centerX = max(0, (PANEL_WIDTH * 2 - (10 + 2) * 8) / 2);
-
+  int centerX = max(0, (DISPLAY_WIDTH - (10 + 2) * 8) / 2);
   dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
   
   // Blinking colon synchronized with seconds
-  // Blink every 500ms within the second cycle
-  uint32_t msInSecond = millis() % 1000;
-  uint32_t blinkCycle = (msInSecond / 500) % 2;
+  uint32_t blinkCycle = (millis() / 500) % 2;
   
-  // Replace colons with spaces on even blink cycles
   if (blinkCycle == 0) {
-    // Show colons
     dma_display->print(timeStr);
   } else {
-    // Hide colons (replace with spaces)
-    String displayStr = String(timeStr);
-    displayStr.replace(':', ' ');
-    dma_display->print(displayStr.c_str());
+    // Replace colons with spaces - avoid String allocation
+    for (int i = 0; timeStr[i]; i++) {
+      dma_display->print(timeStr[i] == ':' ? ' ' : timeStr[i]);
+    }
   }
 }
 
@@ -138,23 +131,21 @@ void displayServiceText() {
   // Cyan color for service text
   dma_display->setTextColor(dma_display->color565(0, 255, 255));
 
-  // Calculate text width (approximate: 6 pixels per character at size 2)
   int textWidth = serviceText.length() * 12;  // 6 * 2 = 12 pixels per char at size 2
   
-  if (textWidth > PANEL_WIDTH) {
-    // Text is larger than panel, scroll it
-    static int serviceTextScrollX = PANEL_WIDTH;
+  if (textWidth > DISPLAY_WIDTH) {
+    // Text is larger than display, scroll it
+    static int serviceTextScrollX = DISPLAY_WIDTH;
     dma_display->setCursor(serviceTextScrollX, DISPLAY_Y_OFFSET);
     dma_display->print(serviceText.c_str());
     
     serviceTextScrollX -= SCROLL_SPEED;
     if (serviceTextScrollX < -textWidth) {
-      serviceTextScrollX = PANEL_WIDTH;  // Reset for next cycle
+      serviceTextScrollX = DISPLAY_WIDTH;
     }
   } else {
-    // Text fits on panel, center it
-    int centerX = (PANEL_WIDTH * 2 - textWidth) / 2;
-    centerX = max(0, centerX);
+    // Text fits on display, center it
+    int centerX = max(0, (DISPLAY_WIDTH - textWidth) / 2);
     dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
     dma_display->print(serviceText.c_str());
   }

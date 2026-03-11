@@ -1,180 +1,19 @@
 #ifndef PORTAL_HTML_H
 #define PORTAL_HTML_H
 
-#include <Arduino.h>
-
-// Web portal HTML with embedded CSS and JavaScript
-String getPortalHTML() {
-  return String(R"=====(<!DOCTYPE html>
+// Web portal HTML stored in flash (no heap allocation)
+const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RetroPixel LED</title>
-  <style>
-    * {
-      font-family: 'Courier New', Courier, monospace;
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    html, body { height: 100%; }
-
-    body {
-      background-color: #a2a2a2;
-      color: #000;
-      padding: 20px;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      flex-direction: column;
-    }
-
-    h1 {
-      text-align: center;
-      font-size: 28px;
-      font-weight: 700;
-      margin-bottom: 20px;
-      text-shadow: -0.3rem 0.3rem 0 rgba(29, 30, 28, 0.26);
-      color: #fff;
-    }
-
-    .c {
-      max-width: 800px;
-      margin: 0 auto;
-      background-color: #fff;
-      border: 2px solid #000;
-      box-shadow: -0.6rem 0.6rem 0 rgba(29, 30, 28, 0.26);
-      padding: 0;
-    }
-
-    .c > h1 {
-      font-size: 18px;
-      padding: 12px;
-      border-bottom: 2px solid #000;
-      margin: 0;
-      text-shadow: none;
-      color: #000;
-    }
-
-    fieldset {
-      border: 2px solid #000 !important;
-      margin: 15px !important;
-      padding: 15px !important;
-      background-color: #f5f5f5;
-    }
-
-    legend {
-      font-weight: 700;
-      color: #000;
-      border: 2px solid #000;
-      padding: 4px 8px;
-      background-color: #dadad3;
-    }
-
-    label {
-      display: block;
-      font-weight: 700;
-      margin: 12px 0 6px 0;
-      font-size: 12px;
-      color: #000;
-    }
-
-    .mode-label {
-      display: flex;
-      align-items: center;
-      margin: 12px 0 6px 0;
-      font-weight: 700;
-      color: #000;
-    }
-
-    .mode-input {
-      margin-right: 8px;
-      cursor: pointer;
-    }
-
-    input, textarea {
-      width: 100%;
-      border: 2px solid #000;
-      background-color: #dadad3;
-      padding: 8px;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 12px;
-      margin-bottom: 10px;
-      box-shadow: none !important;
-    }
-
-    input:focus, textarea:focus {
-      outline: none;
-      background-color: #e8e8e1;
-      border: 2px solid #000;
-    }
-
-    button {
-      width: 100%;
-      padding: 10px;
-      background-color: #dadad3;
-      border: 2px solid #000;
-      font-weight: 700;
-      cursor: pointer;
-      margin: 10px 0;
-      font-size: 12px;
-      box-shadow: none !important;
-      transition: all 0.1s;
-      font-family: 'Courier New', Courier, monospace;
-    }
-
-    button:hover {
-      background-color: #c8c8c1;
-      border: 2px solid #000;
-    }
-
-    button:active {
-      transform: translate(-2px, 2px);
-      box-shadow: -0.2rem 0.2rem 0 rgba(29, 30, 28, 0.26);
-    }
-
-    .msg {
-      display: none;
-      padding: 10px;
-      margin: 10px 0;
-      border: 2px solid #000;
-      font-size: 12px;
-      background-color: #f5f5f5;
-      font-weight: 500;
-    }
-
-    .msg.show {
-      display: block;
-    }
-
-    .msg.ok {
-      background-color: #d4edda;
-      border-color: #000;
-      color: #155724;
-    }
-
-    .msg.er {
-      background-color: #f8d7da;
-      border-color: #000;
-      color: #721c24;
-    }
-
-    .fs-title {
-      font-size: 18px;
-      padding: 12px;
-      border-bottom: 2px solid #000;
-      margin: 0;
-      text-shadow: none;
-      color: #000;
-    }
-  </style>
+  <style>*{font-family:'Courier New',Courier,monospace;margin:0;padding:0;box-sizing:border-box}body{background:#a2a2a2;color:#000;padding:20px;min-height:100vh;display:flex;justify-content:center;flex-direction:column}h1{text-align:center;font-size:28px;font-weight:700;margin-bottom:20px;text-shadow:-.3rem .3rem 0 rgba(29,30,28,.26);color:#fff}.c{max-width:800px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:-.6rem .6rem 0 rgba(29,30,28,.26)}.c>h1{font-size:18px;padding:12px;border-bottom:2px solid #000;margin:0;text-shadow:none;color:#000}fieldset{border:2px solid #000;margin:15px;padding:15px;background:#f5f5f5}legend{font-weight:700;border:2px solid #000;padding:4px 8px;background:#dadad3}label{display:block;font-weight:700;margin:12px 0 6px;font-size:12px}.mode-label{display:flex;align-items:center;margin:12px 0 6px;font-weight:700}.mode-input{margin-right:8px;cursor:pointer}input,textarea{width:100%;border:2px solid #000;background:#dadad3;padding:8px;font-family:inherit;font-size:12px;margin-bottom:10px}input:focus,textarea:focus{outline:0;background:#e8e8e1}button{width:100%;padding:10px;background:#dadad3;border:2px solid #000;font-weight:700;cursor:pointer;margin:10px 0;font-size:12px;font-family:inherit}button:hover{background:#c8c8c1}button:active{transform:translate(-2px,2px);box-shadow:-.2rem .2rem 0 rgba(29,30,28,.26)}.msg{display:none;padding:10px;margin:10px 0;border:2px solid #000;font-size:12px;background:#f5f5f5}.msg.show{display:block}.msg.ok{background:#d4edda;color:#155724}.msg.er{background:#f8d7da;color:#721c24}</style>
 </head>
 <body>
   <h1>RETRO PIXEL</h1>
   <div class="c">
-    <h1 class="fs-title">Settings</h1>
+    <h1>Settings</h1>
 
     <fieldset>
       <legend>WiFi Configuration</legend>
@@ -202,8 +41,6 @@ String getPortalHTML() {
       <input type="number" id="cd" placeholder="10" min="1" max="300">
       <label>Text Duration (seconds):</label>
       <input type="number" id="td" placeholder="60" min="1" max="300">
-      <label>Change Interval (seconds) - Legacy:</label>
-      <input type="number" id="mi" placeholder="10" min="1" max="300" style="opacity:0.5;">
       <button onclick="sm()">Save Modes</button>
       <div id="mmsg" class="msg"></div>
     </fieldset>
@@ -338,7 +175,6 @@ String getPortalHTML() {
         .then(d => {
           if (d.clockEnabled) document.getElementById('mc').checked = true;
           if (d.textEnabled) document.getElementById('mt').checked = true;
-          if (d.interval) document.getElementById('mi').value = d.interval;
           if (d.clockDuration) document.getElementById('cd').value = d.clockDuration;
           if (d.textDuration) document.getElementById('td').value = d.textDuration;
         })
@@ -350,7 +186,6 @@ String getPortalHTML() {
       var mt = document.getElementById('mt').checked;
       var cd = document.getElementById('cd').value || 10;
       var td = document.getElementById('td').value || 60;
-      var mi = document.getElementById('mi').value || 10;
 
       if (!mc && !mt) {
         alert('Select at least one mode');
@@ -363,7 +198,6 @@ String getPortalHTML() {
       var f = new FormData();
       f.append('clock', mc ? 1 : 0);
       f.append('text', mt ? 1 : 0);
-      f.append('interval', mi);
       f.append('clockDuration', cd);
       f.append('textDuration', td);
       fetch('/api/update-modes', { method: 'POST', body: f })
@@ -455,7 +289,6 @@ String getPortalHTML() {
     }
   </script>
 </body>
-</html>)=====" );
-}
+</html>)rawliteral";
 
 #endif // PORTAL_HTML_H
