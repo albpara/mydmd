@@ -12,7 +12,6 @@ extern String ssidWifi;
 extern String passwordWifi;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
-extern uint16_t modeChangeInterval;
 extern uint16_t modeClockDuration;
 extern uint16_t modeTextDuration;
 extern uint32_t wifiConnectAttempt;
@@ -31,8 +30,7 @@ extern void updateMqttSettings(String broker, uint16_t port, String username, St
 void setupWebServerRoutes() {
   // Root - serve HTML portal
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    Serial.println("[WEB] GET / - Enviando portal HTML (" + String(getPortalHTML().length()) + " bytes)");
-    request->send(200, "text/html; charset=utf-8", getPortalHTML());
+    request->send(200, "text/html; charset=utf-8", PORTAL_HTML);
   });
 
   // WiFi scanning endpoint
@@ -105,8 +103,8 @@ void setupWebServerRoutes() {
   // Get scroll text endpoint
   server.on("/api/get-text", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-text");
-    Serial.println("[API]   Texto actual: " + scrollText);
-    String json = "{\"text\":\"" + scrollText + "\"}";
+    char json[128];
+    snprintf(json, sizeof(json), "{\"text\":\"%s\"}", scrollText.c_str());
     request->send(200, "application/json", json);
   });
 
@@ -147,13 +145,10 @@ void setupWebServerRoutes() {
   // Get display modes endpoint
   server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-modes");
-    String json;
-    json.reserve(150);
-    json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
-           ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
-           ",\"interval\":" + String(modeChangeInterval) +
-           ",\"clockDuration\":" + String(modeClockDuration) +
-           ",\"textDuration\":" + String(modeTextDuration) + "}";
+    char json[128];
+    snprintf(json, sizeof(json),
+      "{\"clockEnabled\":%d,\"textEnabled\":%d,\"clockDuration\":%u,\"textDuration\":%u}",
+      modeClockEnabled ? 1 : 0, modeTextEnabled ? 1 : 0, modeClockDuration, modeTextDuration);
     request->send(200, "application/json", json);
   });
 
@@ -173,7 +168,7 @@ void setupWebServerRoutes() {
       
       // Keep interval for compatibility
       int interval = request->hasParam("interval", true) ? 
-        atoi(request->getParam("interval", true)->value().c_str()) : modeChangeInterval;
+        atoi(request->getParam("interval", true)->value().c_str()) : 10;
 
       if (!clockEnabled && !textEnabled) {
         Serial.println("[API]   ERROR: At least one mode must be enabled");
@@ -189,14 +184,12 @@ void setupWebServerRoutes() {
 
       modeClockEnabled = clockEnabled;
       modeTextEnabled = textEnabled;
-      modeChangeInterval = interval;
       modeClockDuration = clockDur;
       modeTextDuration = textDur;
 
       preferences.begin("wifi", false);
       preferences.putBool("modeClock", clockEnabled);
       preferences.putBool("modeText", textEnabled);
-      preferences.putInt("modeInterval", interval);
       preferences.putInt("clockDur", clockDur);
       preferences.putInt("textDur", textDur);
       preferences.end();
@@ -211,15 +204,12 @@ void setupWebServerRoutes() {
   // Get MQTT configuration endpoint
   server.on("/api/mqtt-config", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/mqtt-config");
-    String json;
-    json.reserve(256);
-    json = "{\"broker\":\"" + mqttBroker + "\",";
-    json += "\"port\":" + String(mqttPort) + ",";
-    json += "\"username\":\"" + mqttUsername + "\",";
-    json += "\"password\":\"" + mqttPassword + "\",";
-    json += "\"clientname\":\"" + mqttClientName + "\",";
-    json += "\"prefix\":\"" + mqttTopicPrefix + "\",";
-    json += "\"connected\":" + String(mqttConnected ? 1 : 0) + "}";
+    char json[300];
+    snprintf(json, sizeof(json),
+      "{\"broker\":\"%s\",\"port\":%u,\"username\":\"%s\",\"password\":\"%s\","
+      "\"clientname\":\"%s\",\"prefix\":\"%s\",\"connected\":%d}",
+      mqttBroker.c_str(), mqttPort, mqttUsername.c_str(), mqttPassword.c_str(),
+      mqttClientName.c_str(), mqttTopicPrefix.c_str(), mqttConnected ? 1 : 0);
     request->send(200, "application/json", json);
   });
 
@@ -258,8 +248,8 @@ void setupWebServerRoutes() {
 
   // Catch all - serve HTML portal
   server.onNotFound([](AsyncWebServerRequest *request) {
-    Serial.println("[WEB] Request a ruta desconocida: " + request->url());
-    request->send(200, "text/html; charset=utf-8", getPortalHTML());
+    Serial.println("[WEB] 404: " + request->url());
+    request->send(200, "text/html; charset=utf-8", PORTAL_HTML);
   });
 }
 

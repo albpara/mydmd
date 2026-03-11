@@ -13,7 +13,8 @@ extern String scrollText;
 extern bool wifiConnected;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
-extern uint16_t modeChangeInterval;
+extern uint16_t modeClockDuration;
+extern uint16_t modeTextDuration;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern DNSServer dnsServer;
@@ -57,7 +58,6 @@ void initWiFiManager() {
   scrollText = preferences.getString("scrollText", "MAXIMO Y VICTOR");
   modeClockEnabled = preferences.getBool("modeClock", true);
   modeTextEnabled = preferences.getBool("modeText", true);
-  modeChangeInterval = preferences.getInt("modeInterval", 10);
   modeClockDuration = preferences.getInt("clockDur", 10);
   modeTextDuration = preferences.getInt("textDur", 60);
   preferences.end();

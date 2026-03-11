@@ -15,7 +15,6 @@
 #include "mqtt_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
-const char* WIFI_PASSWORD = "";
 const IPAddress softAPIP(192, 168, 4, 1);
 const IPAddress gateway(192, 168, 4, 1);
 const IPAddress subnet(255, 255, 255, 0);
@@ -36,7 +35,6 @@ uint32_t wifiConnectAttempt = 0;
 // Mode system variables
 bool modeClockEnabled = true;
 bool modeTextEnabled = true;
-uint16_t modeChangeInterval = 10; // seconds (legacy, kept for compatibility)
 uint16_t modeClockDuration = 10; // seconds to display clock
 uint16_t modeTextDuration = 60; // seconds to display text
 uint8_t currentMode = 0; // 0: clock, 1: text
@@ -193,8 +191,12 @@ void loop() {
   // Process MQTT
   processMqtt();
 
-  // Update LED brightness if changed
-  dma_display->setBrightness(displayBrightness);
+  // Update LED brightness only when changed
+  static int lastBrightness = -1;
+  if (displayBrightness != lastBrightness) {
+    dma_display->setBrightness(displayBrightness);
+    lastBrightness = displayBrightness;
+  }
 
   dma_display->fillScreen(0);
 
@@ -203,7 +205,7 @@ void loop() {
     displayServiceText();
   } else {
     // Update mode logic if multiple modes enabled
-    if ((modeClockEnabled && modeTextEnabled) && modeChangeInterval > 0) {
+    if (modeClockEnabled && modeTextEnabled) {
       updateMode();
     }
 
