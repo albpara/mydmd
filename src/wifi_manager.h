@@ -67,33 +67,18 @@ void initWiFiManager() {
     Serial.println("[WIFI] Sin credenciales guardadas");
   }
 
+  // Start WiFi connection if credentials exist (non-blocking)
   if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
     Serial.println("[WIFI] Intentando conectar a: " + ssidWifi);
-    WiFi.mode(WIFI_STA);
+    WiFi.mode(WIFI_AP_STA);  // Both AP and STA for fallback config portal
     WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
-
     wifiConnectAttempt = millis();
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-      wifiConnected = true;
-      Serial.println("[WIFI] CONECTADO: " + String(WiFi.SSID()));
-      Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
-      syncNTP();
-      return;
-    } else {
-      Serial.println("[WIFI] Conexion fallida, entrando en Soft AP");
-    }
+    Serial.println("[WIFI] Conexion en progreso... (se completará en loop)");
+  } else {
+    WiFi.mode(WIFI_AP);
   }
 
   Serial.println("[WIFI] Iniciando Soft AP...");
-  WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(softAPIP, gateway, subnet);
   bool ok = WiFi.softAP(WIFI_SSID);
 
