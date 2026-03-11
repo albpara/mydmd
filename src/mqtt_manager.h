@@ -32,6 +32,8 @@ uint32_t lastMqttReconnect = 0;
 const uint32_t MQTT_RECONNECT_INTERVAL = 5000; // 5 seconds
 uint32_t lastMqttStatePublish = 0;
 const uint32_t MQTT_STATE_PUBLISH_INTERVAL = 30000; // 30 seconds
+uint32_t lastMqttDiagPublish = 0;
+const uint32_t MQTT_DIAG_PUBLISH_INTERVAL = 60000; // 60 seconds
 
 // Device identifiers for Home Assistant
 String deviceId = "";
@@ -42,6 +44,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length);
 void publishHomeAssistantDiscovery();
 void publishDisplayStatus();
 void publishModeStates();
+void publishDiagnostics();
 void connectMqtt();
 
 // Initialize device ID from MAC address
@@ -123,6 +126,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("[MQTT] Invalid text duration: " + payloadStr);
     }
   }
+  
+  // Reboot command: retropixel/system/reboot
+  else if (topicStr.endsWith("/system/reboot")) {
+    if (payloadStr == "ON" || payloadStr == "true") {
+      Serial.println("[MQTT] Reboot command received!");
+      delay(1000);
+      ESP.restart();
+    }
+  }
 }
 
 // Publish current display status
@@ -167,6 +179,35 @@ void publishModeStates() {
   );
 
   Serial.println("[MQTT] Mode states published");
+}
+
+// Publish diagnostic information (IP, uptime, link quality)
+void publishDiagnostics() {
+  if (!mqttClient || !mqttClient->connected()) {
+    return;
+  }
+
+  // Publish IP address
+  String ipAddr = WiFi.localIP().toString();
+  mqttClient->publish((mqttTopicPrefix + "/system/ip/state").c_str(), ipAddr.c_str(), true);
+  
+  // Publish uptime in seconds
+  uint32_t uptimeSeconds = millis() / 1000;
+  mqttClient->publish(
+    (mqttTopicPrefix + "/system/uptime/state").c_str(), 
+    String(uptimeSeconds).c_str(), 
+    true
+  );
+  
+  // Publish link quality (WiFi RSSI in dBm)
+  int32_t rssi = WiFi.RSSI();
+  mqttClient->publish(
+    (mqttTopicPrefix + "/system/link_quality/state").c_str(), 
+    String(rssi).c_str(), 
+    true
+  );
+
+  Serial.println("[MQTT] Diagnostics published - IP: " + ipAddr + " | Uptime: " + String(uptimeSeconds) + "s | RSSI: " + String(rssi) + "dBm");
 }
 
 // Publish Home Assistant MQTT Discovery messages
@@ -268,9 +309,65 @@ void publishHomeAssistantDiscovery() {
   mqttClient->publish(textDurTopic.c_str(), textDurPayload.c_str(), true);
   Serial.println("[MQTT] ✓ Text duration discovery published");
 
+  // 6. Discovery for IP Address (Diagnostic sensor)
+  String ipTopic = "homeassistant/sensor/" + deviceId + "/ip_address/config";
+  String ipPayload = "{";
+  ipPayload += "\"name\":\"IP Address\",";
+  ipPayload += "\"unique_id\":\"retropixel_" + deviceId + "_ip_address\",";
+  ipPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/ip/state\",";
+  ipPayload += "\"entity_category\":\"diagnostic\",";
+  ipPayload += "\"icon\":\"mdi:ip\",";
+  ipPayload += "\"device\":" + deviceInfo;
+  ipPayload += "}";
+  mqttClient->publish(ipTopic.c_str(), ipPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ IP address discovery published");
+
+  // 7. Discovery for Uptime (Diagnostic sensor)
+  String uptimeTopic = "homeassistant/sensor/" + deviceId + "/uptime/config";
+  String uptimePayload = "{";
+  uptimePayload += "\"name\":\"Uptime\",";
+  uptimePayload += "\"unique_id\":\"retropixel_" + deviceId + "_uptime\",";
+  uptimePayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/uptime/state\",";
+  uptimePayload += "\"unit_of_measurement\":\"s\",";
+  uptimePayload += "\"entity_category\":\"diagnostic\",";
+  uptimePayload += "\"icon\":\"mdi:clock-outline\",";
+  uptimePayload += "\"device\":" + deviceInfo;
+  uptimePayload += "}";
+  mqttClient->publish(uptimeTopic.c_str(), uptimePayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Uptime discovery published");
+
+  // 8. Discovery for Link Quality/RSSI (Diagnostic sensor)
+  String rssiTopic = "homeassistant/sensor/" + deviceId + "/link_quality/config";
+  String rssiPayload = "{";
+  rssiPayload += "\"name\":\"Link Quality\",";
+  rssiPayload += "\"unique_id\":\"retropixel_" + deviceId + "_link_quality\",";
+  rssiPayload += "\"state_topic\":\"" + mqttTopicPrefix + "/system/link_quality/state\",";
+  rssiPayload += "\"unit_of_measurement\":\"dBm\",";
+  rssiPayload += "\"entity_category\":\"diagnostic\",";
+  rssiPayload += "\"icon\":\"mdi:signal\",";
+  rssiPayload += "\"device\":" + deviceInfo;
+  rssiPayload += "}";
+  mqttClient->publish(rssiTopic.c_str(), rssiPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Link quality discovery published");
+
+  // 9. Discovery for Reboot Button
+  String rebootTopic = "homeassistant/button/" + deviceId + "/reboot/config";
+  String rebootPayload = "{";
+  rebootPayload += "\"name\":\"Reboot\",";
+  rebootPayload += "\"unique_id\":\"retropixel_" + deviceId + "_reboot\",";
+  rebootPayload += "\"command_topic\":\"" + mqttTopicPrefix + "/system/reboot\",";
+  rebootPayload += "\"payload_press\":\"true\",";
+  rebootPayload += "\"entity_category\":\"config\",";
+  rebootPayload += "\"icon\":\"mdi:restart\",";
+  rebootPayload += "\"device\":" + deviceInfo;
+  rebootPayload += "}";
+  mqttClient->publish(rebootTopic.c_str(), rebootPayload.c_str(), true);
+  Serial.println("[MQTT] ✓ Reboot button discovery published");
+
   // Publish initial states
   publishDisplayStatus();
   publishModeStates();
+  publishDiagnostics();
 }
 
 // Connect to MQTT broker
@@ -440,6 +537,12 @@ void processMqtt() {
     if (millis() - lastMqttStatePublish > MQTT_STATE_PUBLISH_INTERVAL) {
       lastMqttStatePublish = millis();
       publishModeStates();
+    }
+    
+    // Periodically publish diagnostics
+    if (millis() - lastMqttDiagPublish > MQTT_DIAG_PUBLISH_INTERVAL) {
+      lastMqttDiagPublish = millis();
+      publishDiagnostics();
     }
   } else {
     // Attempt reconnect periodically
