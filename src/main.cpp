@@ -6,8 +6,11 @@
 #include <time.h>
 
 // Custom headers
+#include "config.h"
 #include "portal_html.h"
 #include "web_server.h"
+#include "wifi_manager.h"
+#include "display_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
 const char* WIFI_PASSWORD = "";
@@ -32,111 +35,10 @@ uint16_t modeChangeInterval = 10; // seconds
 uint8_t currentMode = 0; // 0: clock, 1: text
 unsigned long lastModeChange = 0;
 
-#define R1_PIN 25
-#define G1_PIN 26
-#define B1_PIN 27
-#define R2_PIN 14
-#define G2_PIN 12
-#define B2_PIN 13
-#define A_PIN 33
-#define B_PIN 32
-#define C_PIN 22
-#define D_PIN 17
-#define CLK_PIN 16
-#define LAT_PIN 4
-#define OE_PIN 15
-
-#define PANEL_WIDTH 64
-#define PANEL_HEIGHT 32
-
-#define BRIGHTNESS 16
-#define SCROLL_START_X 128
-#define DISPLAY_Y_OFFSET 8
-#define TEXT_SIZE 2
-#define SCROLL_SPEED 1
-#define LOOP_DELAY_MS 50
-#define JSON_BUFFER_SIZE 256
-#define MAGENTA_COLOR dma_display->color565(255, 100, 255)
-
 MatrixPanel_I2S_DMA *dma_display = nullptr;
+
 float colorHue = 0.0;
 int textScrollX = SCROLL_START_X;
-
-uint16_t hsvToRGB(float hue) {
-  float h = (hue >= 360.0) ? fmod(hue, 360.0) : hue;
-  float c = 1.0;  // v * s where v=1.0, s=1.0
-  float x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
-  
-  float r = 0, g = 0, b = 0;
-  if (h < 60) { r = c; g = x; }
-  else if (h < 120) { r = x; g = c; }
-  else if (h < 180) { g = c; b = x; }
-  else if (h < 240) { b = c; r = x; }
-  else if (h < 300) { r = x; b = c; }
-  else { r = c; b = x; }
-
-  return dma_display->color565((int)(r * 255), (int)(g * 255), (int)(b * 255));
-}
-
-int calculateTextWidth(const String& text) {
-  return text.length() * (6 * TEXT_SIZE);
-}
-
-void displayScrollText() {
-  dma_display->setTextSize(TEXT_SIZE);
-  dma_display->setTextWrap(false);
-  uint16_t currentColor = hsvToRGB(colorHue);
-  dma_display->setTextColor(currentColor);
-
-  int textWidth = calculateTextWidth(scrollText);
-  dma_display->setCursor(textScrollX, DISPLAY_Y_OFFSET);
-  dma_display->print(scrollText.c_str());
-
-  textScrollX -= SCROLL_SPEED;
-  if (textScrollX < -textWidth) textScrollX = SCROLL_START_X;
-
-  colorHue += 1.0;
-  if (colorHue >= 360.0) colorHue = 0.0;
-}
-
-void syncNTP() {
-  if (!wifiConnected) return;
-
-  Serial.println("[NTP] Sincronizando hora...");
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-
-  time_t now = time(nullptr);
-  int attempts = 0;
-  while (now < 24 * 3600 && attempts < 20) {
-    delay(500);
-    now = time(nullptr);
-    attempts++;
-  }
-
-  if (now > 24 * 3600) {
-    Serial.println("[NTP] Hora sincronizada");
-  } else {
-    Serial.println("[NTP] Error al sincronizar");
-  }
-}
-
-void displayClock() {
-  if (!wifiConnected) return;
-
-  time_t now = time(nullptr);
-  struct tm* timeinfo = localtime(&now);
-  char timeStr[9];
-  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", timeinfo);
-
-  dma_display->setTextSize(TEXT_SIZE);
-  dma_display->setTextColor(MAGENTA_COLOR);
-
-  // 10 chars * 12px + some padding, centered on 128px width
-  int centerX = max(0, (PANEL_WIDTH * 2 - (10 + 2) * 8) / 2);
-
-  dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
-  dma_display->print(timeStr);
-}
 
 void updateMode() {
   if (lastModeChange == 0) {
@@ -165,64 +67,6 @@ void updateMode() {
       }
     }
     if (!found) currentMode = 0;
-  }
-}
-
-void initWiFiManager() {
-  Serial.println("\n========== WiFi Manager ==========");
-
-  preferences.begin("wifi", false);
-  ssidWifi = preferences.getString("ssid", "");
-  passwordWifi = preferences.getString("password", "");
-  scrollText = preferences.getString("scrollText", "MAXIMO Y VICTOR");
-  modeClockEnabled = preferences.getBool("modeClock", true);
-  modeTextEnabled = preferences.getBool("modeText", true);
-  modeChangeInterval = preferences.getInt("modeInterval", 10);
-  preferences.end();
-
-  Serial.println("[WIFI] Cargadas credenciales de Preferences");
-  if (ssidWifi.length() > 0) {
-    Serial.println("[WIFI] SSID guardado: " + ssidWifi);
-  } else {
-    Serial.println("[WIFI] Sin credenciales guardadas");
-  }
-
-  if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
-    Serial.println("[WIFI] Intentando conectar a: " + ssidWifi);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
-
-    wifiConnectAttempt = millis();
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-      wifiConnected = true;
-      Serial.println("[WIFI] CONECTADO: " + String(WiFi.SSID()));
-      Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
-      syncNTP();
-      return;
-    } else {
-      Serial.println("[WIFI] Conexion fallida, entrando en Soft AP");
-    }
-  }
-
-  Serial.println("[WIFI] Iniciando Soft AP...");
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(softAPIP, gateway, subnet);
-  bool ok = WiFi.softAP(WIFI_SSID);
-
-  if (ok) {
-    Serial.println("[WIFI] Soft AP activo");
-    Serial.println("[WIFI] SSID: " + String(WIFI_SSID));
-    Serial.println("[WIFI] IP: " + WiFi.softAPIP().toString());
-  } else {
-    Serial.println("[WIFI] ERROR: No se pudo crear Soft AP");
   }
 }
 
@@ -288,13 +132,14 @@ void setup() {
   dma_display->fillScreen(0);
   dma_display->setBrightness(BRIGHTNESS);
 
+  // Show loading animation
+  displayBootAnimation();
+
   initWiFiManager();
   delay(100);
   setupAsyncServer();
   delay(100);
-  if (wifiConnected) {
-    syncNTP();
-  } else {
+  if (!wifiConnected) {
     setupDNS();
   }
 
