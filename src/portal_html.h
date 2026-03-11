@@ -198,10 +198,33 @@ String getPortalHTML() {
       <legend>Display Modes</legend>
       <label class="mode-label"><input type="checkbox" id="mc" class="mode-input"> Clock</label>
       <label class="mode-label"><input type="checkbox" id="mt" class="mode-input"> Text</label>
-      <label>Change Interval (seconds):</label>
-      <input type="number" id="mi" placeholder="10" min="1" max="300">
+      <label>Clock Duration (seconds):</label>
+      <input type="number" id="cd" placeholder="10" min="1" max="300">
+      <label>Text Duration (seconds):</label>
+      <input type="number" id="td" placeholder="60" min="1" max="300">
+      <label>Change Interval (seconds) - Legacy:</label>
+      <input type="number" id="mi" placeholder="10" min="1" max="300" style="opacity:0.5;">
       <button onclick="sm()">Save Modes</button>
       <div id="mmsg" class="msg"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Home Assistant / MQTT</legend>
+      <label>Broker Address:</label>
+      <input id="mb" placeholder="192.168.1.100" type="text">
+      <label>Broker Port:</label>
+      <input id="mp" placeholder="1883" type="number" min="1" max="65535">
+      <label>Client Name:</label>
+      <input id="mcn" placeholder="RetroPixelLED" type="text">
+      <label>Username (optional):</label>
+      <input id="mu" placeholder="mqtt user" type="text">
+      <label>Password (optional):</label>
+      <input id="mpass" placeholder="mqtt password" type="password">
+      <label>Topic Prefix:</label>
+      <input id="mprefix" placeholder="retropixel" type="text">
+      <button onclick="sc()">Save MQTT Config</button>
+      <div id="mcmsg" class="msg"></div>
+      <div id="mstatus" style="margin-top:10px;"></div>
     </fieldset>
 
     <fieldset>
@@ -316,6 +339,8 @@ String getPortalHTML() {
           if (d.clockEnabled) document.getElementById('mc').checked = true;
           if (d.textEnabled) document.getElementById('mt').checked = true;
           if (d.interval) document.getElementById('mi').value = d.interval;
+          if (d.clockDuration) document.getElementById('cd').value = d.clockDuration;
+          if (d.textDuration) document.getElementById('td').value = d.textDuration;
         })
         .catch(e => console.log(e));
     }
@@ -323,6 +348,8 @@ String getPortalHTML() {
     function sm() {
       var mc = document.getElementById('mc').checked;
       var mt = document.getElementById('mt').checked;
+      var cd = document.getElementById('cd').value || 10;
+      var td = document.getElementById('td').value || 60;
       var mi = document.getElementById('mi').value || 10;
 
       if (!mc && !mt) {
@@ -337,6 +364,8 @@ String getPortalHTML() {
       f.append('clock', mc ? 1 : 0);
       f.append('text', mt ? 1 : 0);
       f.append('interval', mi);
+      f.append('clockDuration', cd);
+      f.append('textDuration', td);
       fetch('/api/update-modes', { method: 'POST', body: f })
         .then(r => r.json())
         .then(d => {
@@ -354,10 +383,75 @@ String getPortalHTML() {
         });
     }
 
+    function ldMqtt() {
+      fetch('/api/mqtt-config')
+        .then(r => r.json())
+        .then(d => {
+          if (d.broker) document.getElementById('mb').value = d.broker;
+          if (d.port) document.getElementById('mp').value = d.port;
+          if (d.clientname) document.getElementById('mcn').value = d.clientname;
+          if (d.username) document.getElementById('mu').value = d.username;
+          if (d.password) document.getElementById('mpass').value = d.password;
+          if (d.prefix) document.getElementById('mprefix').value = d.prefix;
+          var status = document.getElementById('mstatus');
+          if (d.connected) {
+            status.innerHTML = '<div style="color:green;font-weight:bold;">✓ Connected to MQTT</div>';
+          } else {
+            status.innerHTML = '<div style="color:red;">✗ Not connected to MQTT</div>';
+          }
+        })
+        .catch(e => {
+          console.log('Error loading MQTT config:', e);
+          document.getElementById('mstatus').innerHTML = '<div style="color:gray;">MQTT not available</div>';
+        });
+    }
+
+    function sc() {
+      var broker = document.getElementById('mb').value.trim();
+      var port = document.getElementById('mp').value.trim();
+      var clientname = document.getElementById('mcn').value.trim();
+      var user = document.getElementById('mu').value.trim();
+      var pass = document.getElementById('mpass').value.trim();
+      var prefix = document.getElementById('mprefix').value.trim();
+
+      if (!broker || !port || !clientname) {
+        alert('Broker, Port, and Client Name are required');
+        return;
+      }
+
+      var m = document.getElementById('mcmsg');
+      m.textContent = 'Saving...';
+      m.className = 'msg show';
+      var f = new FormData();
+      f.append('broker', broker);
+      f.append('port', port);
+      f.append('clientname', clientname);
+      if (user) f.append('username', user);
+      if (pass) f.append('password', pass);
+      if (prefix) f.append('prefix', prefix);
+      fetch('/api/configure-mqtt', { method: 'POST', body: f })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) {
+            m.textContent = 'Saved! Connecting...';
+            m.className = 'msg show ok';
+            setTimeout(() => { ldMqtt(); }, 2000);
+          } else {
+            m.textContent = 'Error saving config';
+            m.className = 'msg show er';
+          }
+        })
+        .catch(e => {
+          m.textContent = 'Failed';
+          m.className = 'msg show er';
+        });
+    }
+
     window.onload = function() {
       ldWiFi();
       ld();
       ldModes();
+      ldMqtt();
     }
   </script>
 </body>

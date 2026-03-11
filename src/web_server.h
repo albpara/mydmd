@@ -13,9 +13,19 @@ extern String passwordWifi;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
 extern uint16_t modeChangeInterval;
+extern uint16_t modeClockDuration;
+extern uint16_t modeTextDuration;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern int textScrollX;
+extern bool mqttConnected;
+extern String mqttBroker;
+extern uint16_t mqttPort;
+extern String mqttUsername;
+extern String mqttPassword;
+extern String mqttClientName;
+extern String mqttTopicPrefix;
+extern void updateMqttSettings(String broker, uint16_t port, String username, String password, String clientname, String prefix);
 
 // Setup all web server routes
 void setupWebServerRoutes() {
@@ -138,10 +148,12 @@ void setupWebServerRoutes() {
   server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-modes");
     String json;
-    json.reserve(100);
+    json.reserve(150);
     json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
            ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
-           ",\"interval\":" + String(modeChangeInterval) + "}";
+           ",\"interval\":" + String(modeChangeInterval) +
+           ",\"clockDuration\":" + String(modeClockDuration) +
+           ",\"textDuration\":" + String(modeTextDuration) + "}";
     request->send(200, "application/json", json);
   });
 
@@ -149,10 +161,19 @@ void setupWebServerRoutes() {
   server.on("/api/update-modes", HTTP_POST, [](AsyncWebServerRequest *request) {
     Serial.println("[API] POST /api/update-modes");
     String response = "{\"success\":false}";
-    if (request->hasParam("clock", true) && request->hasParam("text", true) && request->hasParam("interval", true)) {
+    if (request->hasParam("clock", true) && request->hasParam("text", true)) {
       bool clockEnabled = request->getParam("clock", true)->value() == "1";
       bool textEnabled = request->getParam("text", true)->value() == "1";
-      int interval = atoi(request->getParam("interval", true)->value().c_str());
+      
+      // Get individual durations (optional, with fallbacks)
+      int clockDur = request->hasParam("clockDuration", true) ? 
+        atoi(request->getParam("clockDuration", true)->value().c_str()) : modeClockDuration;
+      int textDur = request->hasParam("textDuration", true) ? 
+        atoi(request->getParam("textDuration", true)->value().c_str()) : modeTextDuration;
+      
+      // Keep interval for compatibility
+      int interval = request->hasParam("interval", true) ? 
+        atoi(request->getParam("interval", true)->value().c_str()) : modeChangeInterval;
 
       if (!clockEnabled && !textEnabled) {
         Serial.println("[API]   ERROR: At least one mode must be enabled");
@@ -160,8 +181,8 @@ void setupWebServerRoutes() {
         return;
       }
 
-      if (interval < 1 || interval > 300) {
-        Serial.println("[API]   ERROR: Invalid interval");
+      if (clockDur < 1 || clockDur > 300 || textDur < 1 || textDur > 300) {
+        Serial.println("[API]   ERROR: Invalid duration (1-300 seconds)");
         request->send(200, "application/json", response);
         return;
       }
@@ -169,15 +190,68 @@ void setupWebServerRoutes() {
       modeClockEnabled = clockEnabled;
       modeTextEnabled = textEnabled;
       modeChangeInterval = interval;
+      modeClockDuration = clockDur;
+      modeTextDuration = textDur;
 
       preferences.begin("wifi", false);
       preferences.putBool("modeClock", clockEnabled);
       preferences.putBool("modeText", textEnabled);
       preferences.putInt("modeInterval", interval);
+      preferences.putInt("clockDur", clockDur);
+      preferences.putInt("textDur", textDur);
       preferences.end();
 
+      Serial.println("[API]   Clock: " + String(clockDur) + "s, Text: " + String(textDur) + "s");
       response = "{\"success\":true}";
       Serial.println("[API]   Modos guardados");
+    }
+    request->send(200, "application/json", response);
+  });
+
+  // Get MQTT configuration endpoint
+  server.on("/api/mqtt-config", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] GET /api/mqtt-config");
+    String json;
+    json.reserve(256);
+    json = "{\"broker\":\"" + mqttBroker + "\",";
+    json += "\"port\":" + String(mqttPort) + ",";
+    json += "\"username\":\"" + mqttUsername + "\",";
+    json += "\"password\":\"" + mqttPassword + "\",";
+    json += "\"clientname\":\"" + mqttClientName + "\",";
+    json += "\"prefix\":\"" + mqttTopicPrefix + "\",";
+    json += "\"connected\":" + String(mqttConnected ? 1 : 0) + "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Configure MQTT endpoint
+  server.on("/api/configure-mqtt", HTTP_POST, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] POST /api/configure-mqtt");
+    String response = "{\"success\":false}";
+
+    if (request->hasParam("broker", true) && request->hasParam("port", true)) {
+      String broker = request->getParam("broker", true)->value();
+      String portStr = request->getParam("port", true)->value();
+      String username = request->hasParam("username", true) ? request->getParam("username", true)->value() : "";
+      String password = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
+      String clientname = request->hasParam("clientname", true) ? request->getParam("clientname", true)->value() : "RetroPixelLED";
+      String prefix = request->hasParam("prefix", true) ? request->getParam("prefix", true)->value() : "retropixel";
+
+      uint16_t port = atoi(portStr.c_str());
+
+      if (broker.length() > 0 && port > 0 && port <= 65535 && clientname.length() > 0 && prefix.length() > 0) {
+        Serial.println("[API]   Broker: " + broker);
+        Serial.println("[API]   Port: " + String(port));
+        Serial.println("[API]   Client Name: " + clientname);
+        Serial.println("[API]   Username: " + String(username.length() > 0 ? "***" : "(none)"));
+        Serial.println("[API]   Prefix: " + prefix);
+
+        updateMqttSettings(broker, port, username, password, clientname, prefix);
+        response = "{\"success\":true}";
+      } else {
+        Serial.println("[API]   ERROR: Invalid parameters");
+      }
+    } else {
+      Serial.println("[API]   ERROR: Missing broker or port");
     }
     request->send(200, "application/json", response);
   });

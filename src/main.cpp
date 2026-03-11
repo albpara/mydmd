@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <time.h>
+#include <PubSubClient.h>
 
 // Custom headers
 #include "config.h"
@@ -11,6 +12,7 @@
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "display_manager.h"
+#include "mqtt_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
 const char* WIFI_PASSWORD = "";
@@ -22,6 +24,9 @@ DNSServer dnsServer;
 AsyncWebServer server(80);
 Preferences preferences;
 
+// WiFi client for MQTT
+WiFiClient espClient;
+
 String ssidWifi = "";
 String passwordWifi = "";
 String scrollText = "Lorem Ipsum - RetroPixel LED Matrix Display";
@@ -31,9 +36,14 @@ uint32_t wifiConnectAttempt = 0;
 // Mode system variables
 bool modeClockEnabled = true;
 bool modeTextEnabled = true;
-uint16_t modeChangeInterval = 10; // seconds
+uint16_t modeChangeInterval = 10; // seconds (legacy, kept for compatibility)
+uint16_t modeClockDuration = 10; // seconds to display clock
+uint16_t modeTextDuration = 60; // seconds to display text
 uint8_t currentMode = 0; // 0: clock, 1: text
 unsigned long lastModeChange = 0;
+
+// Display brightness control (MQTT)
+int displayBrightness = BRIGHTNESS;
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 
@@ -46,8 +56,11 @@ void updateMode() {
     return;
   }
 
+  // Get duration for current mode
+  uint16_t currentDuration = (currentMode == 0) ? modeClockDuration : modeTextDuration;
   unsigned long elapsed = millis() - lastModeChange;
-  if (elapsed >= (modeChangeInterval * 1000UL)) {
+  
+  if (elapsed >= (currentDuration * 1000UL)) {
     lastModeChange = millis();
 
     // Count enabled modes
@@ -130,7 +143,7 @@ void setup() {
 
   dma_display->setTextColor(65535);
   dma_display->fillScreen(0);
-  dma_display->setBrightness(BRIGHTNESS);
+  dma_display->setBrightness(displayBrightness);
 
   // Show loading animation
   displayBootAnimation();
@@ -142,6 +155,8 @@ void setup() {
   if (!wifiConnected) {
     setupDNS();
   }
+  delay(100);
+  initMqtt();
 
   Serial.println("\n========== SISTEMA LISTO ==========\n");
 }
@@ -157,6 +172,8 @@ void loop() {
       dnsServer.stop();
       Serial.println("[LOOP] DNS detenido");
       syncNTP();
+      // Immediately attempt MQTT connection now that WiFi is up
+      connectMqtt();
     } else if (millis() - wifiConnectAttempt > 30000) {
       if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
         Serial.println("[LOOP] Reintentando WiFi...");
@@ -166,6 +183,12 @@ void loop() {
       }
     }
   }
+
+  // Process MQTT
+  processMqtt();
+
+  // Update LED brightness if changed
+  dma_display->setBrightness(displayBrightness);
 
   dma_display->fillScreen(0);
 
