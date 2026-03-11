@@ -218,10 +218,6 @@ String getPortalHTML() {
       color: #000;
     }
 
-    .t {
-      display: none;
-    }
-
     fieldset {
       border: 2px solid #000 !important;
       margin: 15px !important;
@@ -245,18 +241,7 @@ String getPortalHTML() {
       color: #000;
     }
 
-    .hdr {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
 
-    .hdr label {
-      margin: 0;
-      flex: 1;
-    }
 
     input, textarea {
       width: 100%;
@@ -312,40 +297,7 @@ String getPortalHTML() {
       overflow-y: auto;
       margin: 10px 0;
       background-color: #f5f5f5;
-    }
-
-    .ni {
-      padding: 10px;
-      cursor: pointer;
-      border-bottom: 1px solid #ddd;
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      background-color: #fff;
-    }
-
-    .ni:hover {
-      background-color: #e8e8e1;
-    }
-
-    .ni.s {
-      background-color: #d4d4cc;
-      border-left: 4px solid #000;
-      font-weight: 700;
-    }
-
-    .msg {
-      display: none;
-      padding: 10px;
-      margin: 10px 0;
-      border: 2px solid #000;
-      font-size: 12px;
-      background-color: #f5f5f5;
-      font-weight: 500;
-    }
-
-    .msg.show {
-      display: block;
+ display: block;
     }
 
     .msg.ok {
