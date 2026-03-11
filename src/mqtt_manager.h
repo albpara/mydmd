@@ -14,6 +14,10 @@ extern int displayBrightness;
 extern uint8_t displayMode;
 extern MatrixPanel_I2S_DMA *dma_display;
 extern Preferences preferences;
+extern bool modeClockEnabled;
+extern bool modeTextEnabled;
+extern uint16_t modeClockDuration;
+extern uint16_t modeTextDuration;
 
 // MQTT variables
 PubSubClient *mqttClient = nullptr;
@@ -69,6 +73,52 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("[MQTT] Display OFF");
     }
     publishDisplayStatus();
+  }
+  
+  // Mode control: retropixel/modes/clock/set (on/off)
+  else if (topicStr.endsWith("/modes/clock/set")) {
+    modeClockEnabled = (payloadStr == "ON" || payloadStr == "on");
+    Serial.println("[MQTT] Clock mode: " + String(modeClockEnabled ? "ON" : "OFF"));
+    preferences.begin("wifi", false);
+    preferences.putBool("modeClock", modeClockEnabled);
+    preferences.end();
+  }
+  
+  // Mode control: retropixel/modes/text/set (on/off)
+  else if (topicStr.endsWith("/modes/text/set")) {
+    modeTextEnabled = (payloadStr == "ON" || payloadStr == "on");
+    Serial.println("[MQTT] Text mode: " + String(modeTextEnabled ? "ON" : "OFF"));
+    preferences.begin("wifi", false);
+    preferences.putBool("modeText", modeTextEnabled);
+    preferences.end();
+  }
+  
+  // Duration control: retropixel/modes/clockDuration/set (seconds)
+  else if (topicStr.endsWith("/modes/clockDuration/set")) {
+    int dur = atoi(payloadStr.c_str());
+    if (dur >= 1 && dur <= 300) {
+      modeClockDuration = dur;
+      Serial.println("[MQTT] Clock duration: " + String(dur) + "s");
+      preferences.begin("wifi", false);
+      preferences.putInt("clockDur", dur);
+      preferences.end();
+    } else {
+      Serial.println("[MQTT] Invalid clock duration: " + payloadStr);
+    }
+  }
+  
+  // Duration control: retropixel/modes/textDuration/set (seconds)
+  else if (topicStr.endsWith("/modes/textDuration/set")) {
+    int dur = atoi(payloadStr.c_str());
+    if (dur >= 1 && dur <= 300) {
+      modeTextDuration = dur;
+      Serial.println("[MQTT] Text duration: " + String(dur) + "s");
+      preferences.begin("wifi", false);
+      preferences.putInt("textDur", dur);
+      preferences.end();
+    } else {
+      Serial.println("[MQTT] Invalid text duration: " + payloadStr);
+    }
   }
 }
 
@@ -189,6 +239,23 @@ void connectMqtt() {
     String powerSetTopic = mqttTopicPrefix + "/display/power/set";
     mqttClient->subscribe(powerSetTopic.c_str());
     Serial.println("[MQTT] Subscribed to: " + powerSetTopic);
+    
+    // Subscribe to mode control topics
+    String clockModeTopic = mqttTopicPrefix + "/modes/clock/set";
+    mqttClient->subscribe(clockModeTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + clockModeTopic);
+    
+    String textModeTopic = mqttTopicPrefix + "/modes/text/set";
+    mqttClient->subscribe(textModeTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + textModeTopic);
+    
+    String clockDurTopic = mqttTopicPrefix + "/modes/clockDuration/set";
+    mqttClient->subscribe(clockDurTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + clockDurTopic);
+    
+    String textDurTopic = mqttTopicPrefix + "/modes/textDuration/set";
+    mqttClient->subscribe(textDurTopic.c_str());
+    Serial.println("[MQTT] Subscribed to: " + textDurTopic);
 
     // Publish discovery
     publishHomeAssistantDiscovery();

@@ -58,6 +58,8 @@ void initWiFiManager() {
   modeClockEnabled = preferences.getBool("modeClock", true);
   modeTextEnabled = preferences.getBool("modeText", true);
   modeChangeInterval = preferences.getInt("modeInterval", 10);
+  modeClockDuration = preferences.getInt("clockDur", 10);
+  modeTextDuration = preferences.getInt("textDur", 60);
   preferences.end();
 
   Serial.println("[WIFI] Cargadas credenciales de Preferences");

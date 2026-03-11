@@ -36,7 +36,9 @@ uint32_t wifiConnectAttempt = 0;
 // Mode system variables
 bool modeClockEnabled = true;
 bool modeTextEnabled = true;
-uint16_t modeChangeInterval = 10; // seconds
+uint16_t modeChangeInterval = 10; // seconds (legacy, kept for compatibility)
+uint16_t modeClockDuration = 10; // seconds to display clock
+uint16_t modeTextDuration = 60; // seconds to display text
 uint8_t currentMode = 0; // 0: clock, 1: text
 unsigned long lastModeChange = 0;
 
@@ -54,8 +56,11 @@ void updateMode() {
     return;
   }
 
+  // Get duration for current mode
+  uint16_t currentDuration = (currentMode == 0) ? modeClockDuration : modeTextDuration;
   unsigned long elapsed = millis() - lastModeChange;
-  if (elapsed >= (modeChangeInterval * 1000UL)) {
+  
+  if (elapsed >= (currentDuration * 1000UL)) {
     lastModeChange = millis();
 
     // Count enabled modes

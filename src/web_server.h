@@ -13,6 +13,8 @@ extern String passwordWifi;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
 extern uint16_t modeChangeInterval;
+extern uint16_t modeClockDuration;
+extern uint16_t modeTextDuration;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern int textScrollX;
@@ -146,10 +148,12 @@ void setupWebServerRoutes() {
   server.on("/api/get-modes", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.println("[API] GET /api/get-modes");
     String json;
-    json.reserve(100);
+    json.reserve(150);
     json = "{\"clockEnabled\":" + String(modeClockEnabled ? 1 : 0) +
            ",\"textEnabled\":" + String(modeTextEnabled ? 1 : 0) +
-           ",\"interval\":" + String(modeChangeInterval) + "}";
+           ",\"interval\":" + String(modeChangeInterval) +
+           ",\"clockDuration\":" + String(modeClockDuration) +
+           ",\"textDuration\":" + String(modeTextDuration) + "}";
     request->send(200, "application/json", json);
   });
 
@@ -157,10 +161,19 @@ void setupWebServerRoutes() {
   server.on("/api/update-modes", HTTP_POST, [](AsyncWebServerRequest *request) {
     Serial.println("[API] POST /api/update-modes");
     String response = "{\"success\":false}";
-    if (request->hasParam("clock", true) && request->hasParam("text", true) && request->hasParam("interval", true)) {
+    if (request->hasParam("clock", true) && request->hasParam("text", true)) {
       bool clockEnabled = request->getParam("clock", true)->value() == "1";
       bool textEnabled = request->getParam("text", true)->value() == "1";
-      int interval = atoi(request->getParam("interval", true)->value().c_str());
+      
+      // Get individual durations (optional, with fallbacks)
+      int clockDur = request->hasParam("clockDuration", true) ? 
+        atoi(request->getParam("clockDuration", true)->value().c_str()) : modeClockDuration;
+      int textDur = request->hasParam("textDuration", true) ? 
+        atoi(request->getParam("textDuration", true)->value().c_str()) : modeTextDuration;
+      
+      // Keep interval for compatibility
+      int interval = request->hasParam("interval", true) ? 
+        atoi(request->getParam("interval", true)->value().c_str()) : modeChangeInterval;
 
       if (!clockEnabled && !textEnabled) {
         Serial.println("[API]   ERROR: At least one mode must be enabled");
@@ -168,8 +181,8 @@ void setupWebServerRoutes() {
         return;
       }
 
-      if (interval < 1 || interval > 300) {
-        Serial.println("[API]   ERROR: Invalid interval");
+      if (clockDur < 1 || clockDur > 300 || textDur < 1 || textDur > 300) {
+        Serial.println("[API]   ERROR: Invalid duration (1-300 seconds)");
         request->send(200, "application/json", response);
         return;
       }
@@ -177,13 +190,18 @@ void setupWebServerRoutes() {
       modeClockEnabled = clockEnabled;
       modeTextEnabled = textEnabled;
       modeChangeInterval = interval;
+      modeClockDuration = clockDur;
+      modeTextDuration = textDur;
 
       preferences.begin("wifi", false);
       preferences.putBool("modeClock", clockEnabled);
       preferences.putBool("modeText", textEnabled);
       preferences.putInt("modeInterval", interval);
+      preferences.putInt("clockDur", clockDur);
+      preferences.putInt("textDur", textDur);
       preferences.end();
 
+      Serial.println("[API]   Clock: " + String(clockDur) + "s, Text: " + String(textDur) + "s");
       response = "{\"success\":true}";
       Serial.println("[API]   Modos guardados");
     }

@@ -198,8 +198,12 @@ String getPortalHTML() {
       <legend>Display Modes</legend>
       <label class="mode-label"><input type="checkbox" id="mc" class="mode-input"> Clock</label>
       <label class="mode-label"><input type="checkbox" id="mt" class="mode-input"> Text</label>
-      <label>Change Interval (seconds):</label>
-      <input type="number" id="mi" placeholder="10" min="1" max="300">
+      <label>Clock Duration (seconds):</label>
+      <input type="number" id="cd" placeholder="10" min="1" max="300">
+      <label>Text Duration (seconds):</label>
+      <input type="number" id="td" placeholder="60" min="1" max="300">
+      <label>Change Interval (seconds) - Legacy:</label>
+      <input type="number" id="mi" placeholder="10" min="1" max="300" style="opacity:0.5;">
       <button onclick="sm()">Save Modes</button>
       <div id="mmsg" class="msg"></div>
     </fieldset>
@@ -335,6 +339,8 @@ String getPortalHTML() {
           if (d.clockEnabled) document.getElementById('mc').checked = true;
           if (d.textEnabled) document.getElementById('mt').checked = true;
           if (d.interval) document.getElementById('mi').value = d.interval;
+          if (d.clockDuration) document.getElementById('cd').value = d.clockDuration;
+          if (d.textDuration) document.getElementById('td').value = d.textDuration;
         })
         .catch(e => console.log(e));
     }
@@ -342,6 +348,8 @@ String getPortalHTML() {
     function sm() {
       var mc = document.getElementById('mc').checked;
       var mt = document.getElementById('mt').checked;
+      var cd = document.getElementById('cd').value || 10;
+      var td = document.getElementById('td').value || 60;
       var mi = document.getElementById('mi').value || 10;
 
       if (!mc && !mt) {
@@ -356,6 +364,8 @@ String getPortalHTML() {
       f.append('clock', mc ? 1 : 0);
       f.append('text', mt ? 1 : 0);
       f.append('interval', mi);
+      f.append('clockDuration', cd);
+      f.append('textDuration', td);
       fetch('/api/update-modes', { method: 'POST', body: f })
         .then(r => r.json())
         .then(d => {
