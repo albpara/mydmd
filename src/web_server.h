@@ -16,6 +16,14 @@ extern uint16_t modeChangeInterval;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern int textScrollX;
+extern bool mqttConnected;
+extern String mqttBroker;
+extern uint16_t mqttPort;
+extern String mqttUsername;
+extern String mqttPassword;
+extern String mqttClientName;
+extern String mqttTopicPrefix;
+extern void updateMqttSettings(String broker, uint16_t port, String username, String password, String clientname, String prefix);
 
 // Setup all web server routes
 void setupWebServerRoutes() {
@@ -178,6 +186,54 @@ void setupWebServerRoutes() {
 
       response = "{\"success\":true}";
       Serial.println("[API]   Modos guardados");
+    }
+    request->send(200, "application/json", response);
+  });
+
+  // Get MQTT configuration endpoint
+  server.on("/api/mqtt-config", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] GET /api/mqtt-config");
+    String json;
+    json.reserve(256);
+    json = "{\"broker\":\"" + mqttBroker + "\",";
+    json += "\"port\":" + String(mqttPort) + ",";
+    json += "\"username\":\"" + mqttUsername + "\",";
+    json += "\"password\":\"" + mqttPassword + "\",";
+    json += "\"clientname\":\"" + mqttClientName + "\",";
+    json += "\"prefix\":\"" + mqttTopicPrefix + "\",";
+    json += "\"connected\":" + String(mqttConnected ? 1 : 0) + "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Configure MQTT endpoint
+  server.on("/api/configure-mqtt", HTTP_POST, [](AsyncWebServerRequest *request) {
+    Serial.println("[API] POST /api/configure-mqtt");
+    String response = "{\"success\":false}";
+
+    if (request->hasParam("broker", true) && request->hasParam("port", true)) {
+      String broker = request->getParam("broker", true)->value();
+      String portStr = request->getParam("port", true)->value();
+      String username = request->hasParam("username", true) ? request->getParam("username", true)->value() : "";
+      String password = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
+      String clientname = request->hasParam("clientname", true) ? request->getParam("clientname", true)->value() : "RetroPixelLED";
+      String prefix = request->hasParam("prefix", true) ? request->getParam("prefix", true)->value() : "retropixel";
+
+      uint16_t port = atoi(portStr.c_str());
+
+      if (broker.length() > 0 && port > 0 && port <= 65535 && clientname.length() > 0 && prefix.length() > 0) {
+        Serial.println("[API]   Broker: " + broker);
+        Serial.println("[API]   Port: " + String(port));
+        Serial.println("[API]   Client Name: " + clientname);
+        Serial.println("[API]   Username: " + String(username.length() > 0 ? "***" : "(none)"));
+        Serial.println("[API]   Prefix: " + prefix);
+
+        updateMqttSettings(broker, port, username, password, clientname, prefix);
+        response = "{\"success\":true}";
+      } else {
+        Serial.println("[API]   ERROR: Invalid parameters");
+      }
+    } else {
+      Serial.println("[API]   ERROR: Missing broker or port");
     }
     request->send(200, "application/json", response);
   });

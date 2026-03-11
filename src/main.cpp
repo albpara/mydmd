@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <time.h>
+#include <PubSubClient.h>
 
 // Custom headers
 #include "config.h"
@@ -11,6 +12,7 @@
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "display_manager.h"
+#include "mqtt_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
 const char* WIFI_PASSWORD = "";
@@ -21,6 +23,9 @@ const IPAddress subnet(255, 255, 255, 0);
 DNSServer dnsServer;
 AsyncWebServer server(80);
 Preferences preferences;
+
+// WiFi client for MQTT
+WiFiClient espClient;
 
 String ssidWifi = "";
 String passwordWifi = "";
@@ -34,6 +39,9 @@ bool modeTextEnabled = true;
 uint16_t modeChangeInterval = 10; // seconds
 uint8_t currentMode = 0; // 0: clock, 1: text
 unsigned long lastModeChange = 0;
+
+// Display brightness control (MQTT)
+int displayBrightness = BRIGHTNESS;
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 
@@ -130,7 +138,7 @@ void setup() {
 
   dma_display->setTextColor(65535);
   dma_display->fillScreen(0);
-  dma_display->setBrightness(BRIGHTNESS);
+  dma_display->setBrightness(displayBrightness);
 
   // Show loading animation
   displayBootAnimation();
@@ -142,6 +150,8 @@ void setup() {
   if (!wifiConnected) {
     setupDNS();
   }
+  delay(100);
+  initMqtt();
 
   Serial.println("\n========== SISTEMA LISTO ==========\n");
 }
@@ -166,6 +176,12 @@ void loop() {
       }
     }
   }
+
+  // Process MQTT
+  processMqtt();
+
+  // Update LED brightness if changed
+  dma_display->setBrightness(displayBrightness);
 
   dma_display->fillScreen(0);
 
