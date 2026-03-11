@@ -102,8 +102,10 @@ void displayClock() {
 
   dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
   
-  // Blinking colon: blink every 500ms
-  uint32_t blinkCycle = (millis() / 500) % 2;
+  // Blinking colon synchronized with seconds
+  // Blink every 500ms within the second cycle
+  uint32_t msInSecond = millis() % 1000;
+  uint32_t blinkCycle = (msInSecond / 500) % 2;
   
   // Replace colons with spaces on even blink cycles
   if (blinkCycle == 0) {
