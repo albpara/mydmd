@@ -101,7 +101,20 @@ void displayClock() {
   int centerX = max(0, (PANEL_WIDTH * 2 - (10 + 2) * 8) / 2);
 
   dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
-  dma_display->print(timeStr);
+  
+  // Blinking colon: blink every 500ms
+  uint32_t blinkCycle = (millis() / 500) % 2;
+  
+  // Replace colons with spaces on even blink cycles
+  if (blinkCycle == 0) {
+    // Show colons
+    dma_display->print(timeStr);
+  } else {
+    // Hide colons (replace with spaces)
+    String displayStr = String(timeStr);
+    displayStr.replace(':', ' ');
+    dma_display->print(displayStr.c_str());
+  }
 }
 
 // Display service text (called from MQTT command)
