@@ -13,6 +13,7 @@
 #include "wifi_manager.h"
 #include "display_manager.h"
 #include "mqtt_manager.h"
+#include "sd_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
 const IPAddress softAPIP(192, 168, 4, 1);
@@ -200,6 +201,11 @@ void setup() {
 
   // Show loading animation
   displayBootAnimation();
+
+  // Initialize SD Card
+  delay(100);
+  initSDCard();
+  listSDFiles();
 
   initWiFiManager();
   delay(100);
