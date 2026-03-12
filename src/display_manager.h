@@ -9,6 +9,8 @@
 extern MatrixPanel_I2S_DMA *dma_display;
 extern String scrollText;
 extern bool wifiConnected;
+extern bool ntpSynchronized;
+extern bool isBootupPhase;
 extern float colorHue;
 extern int textScrollX;
 extern String serviceText;
@@ -21,7 +23,7 @@ uint16_t hsvToRGB(float hue) {
   float h = (hue >= 360.0) ? fmod(hue, 360.0) : hue;
   float c = 1.0;  // v * s where v=1.0, s=1.0
   float x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
-  
+
   float r = 0, g = 0, b = 0;
   if (h < 60) { r = c; g = x; }
   else if (h < 120) { r = x; g = c; }
@@ -43,14 +45,14 @@ void displayBootAnimation() {
   Serial.println("[BOOT] Mostrando animación de carga...");
   for (int frame = 0; frame < 3; frame++) {
     dma_display->fillScreen(0);
-    
+
     // Simple animated pattern: shift colors
     uint16_t color = dma_display->color565(
       (frame * 100) % 255,
       (frame * 80) % 255,
       (frame * 60) % 255
     );
-    
+
     // Draw "LOADING" text
     dma_display->setTextSize(1);
     dma_display->setTextColor(color);
@@ -59,7 +61,7 @@ void displayBootAnimation() {
 
     dma_display->setCursor(centerX, 12);
     dma_display->print("LOADING");
-    
+
     delay(300);
   }
   dma_display->fillScreen(0);
@@ -84,9 +86,9 @@ void displayScrollText() {
   if (colorHue >= 360.0) colorHue = 0.0;
 }
 
-// Display clock if WiFi is connected
+// Display clock only if NTP time is synchronized
 void displayClock() {
-  if (!wifiConnected) return;
+  if (!wifiConnected || !ntpSynchronized) return;
 
   time_t now = time(nullptr);
   struct tm* timeinfo = localtime(&now);
@@ -98,11 +100,11 @@ void displayClock() {
 
   int centerX = max(0, (DISPLAY_WIDTH - (10 + 2) * 8) / 2);
   dma_display->setCursor(centerX, DISPLAY_Y_OFFSET);
-  
-  // Blinking colon synchronized with seconds
-  uint32_t blinkCycle = (millis() / 500) % 2;
-  
-  if (blinkCycle == 0) {
+
+  // Colon blinks synchronized to the exact moment seconds change
+  bool showColon = (timeinfo->tm_sec % 2) == 0;
+
+  if (showColon) {
     dma_display->print(timeStr);
   } else {
     // Replace colons with spaces - avoid String allocation
@@ -127,18 +129,18 @@ void displayServiceText() {
 
   dma_display->setTextSize(2);  // Font size 2 as requested
   dma_display->setTextWrap(false);
-  
+
   // Cyan color for service text
   dma_display->setTextColor(dma_display->color565(0, 255, 255));
 
   int textWidth = serviceText.length() * 12;  // 6 * 2 = 12 pixels per char at size 2
-  
+
   if (textWidth > DISPLAY_WIDTH) {
     // Text is larger than display, scroll it
     static int serviceTextScrollX = DISPLAY_WIDTH;
     dma_display->setCursor(serviceTextScrollX, DISPLAY_Y_OFFSET);
     dma_display->print(serviceText.c_str());
-    
+
     serviceTextScrollX -= SCROLL_SPEED;
     if (serviceTextScrollX < -textWidth) {
       serviceTextScrollX = DISPLAY_WIDTH;

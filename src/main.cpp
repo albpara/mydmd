@@ -30,7 +30,12 @@ String ssidWifi = "";
 String passwordWifi = "";
 String scrollText = "Lorem Ipsum - RetroPixel LED Matrix Display";
 bool wifiConnected = false;
+bool ntpSynchronized = false;
+bool hasWifiCredentials = false;
+bool wifiTimeoutOccurred = false;
+bool isBootupPhase = true;
 uint32_t wifiConnectAttempt = 0;
+uint32_t lastNtpCheck = 0;
 
 // Mode system variables
 bool modeClockEnabled = true;
@@ -53,6 +58,50 @@ MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 float colorHue = 0.0;
 int textScrollX = SCROLL_START_X;
+
+// Display loading text continuously during boot/NTP sync
+void displayLoadingText() {
+  dma_display->fillScreen(0);
+  dma_display->setTextSize(1);
+  
+  // Smooth color animation for loading
+  uint32_t colorCycle = (millis() / 100) % 6;
+  uint16_t color;
+  switch (colorCycle) {
+    case 0: case 1: color = dma_display->color565(255, 0, 100); break;   // Red-pink
+    case 2: case 3: color = dma_display->color565(100, 0, 255); break;   // Blue-purple
+    default: color = dma_display->color565(0, 255, 200); break;          // Cyan
+  }
+  dma_display->setTextColor(color);
+
+  int centerX = max(0, (PANEL_WIDTH * 2 - (7) * 6) / 2);
+  dma_display->setCursor(centerX, 12);
+  dma_display->print("LOADING");
+}
+
+void checkNtpSynchronization() {
+  // Only check periodically to avoid overhead
+  if (millis() - lastNtpCheck < 5000) return;
+  lastNtpCheck = millis();
+
+  if (!wifiConnected) {
+    ntpSynchronized = false;
+    return;
+  }
+
+  time_t now = time(nullptr);
+  // NTP is synchronized if time is greater than Jan 1, 2020 (1577836800 seconds)
+  // This indicates time has been set from network
+  if (now > 1577836800) {
+    if (!ntpSynchronized) {
+      Serial.println("[NTP] Sincronización completada");
+      isBootupPhase = false;  // Exit boot phase when NTP syncs
+    }
+    ntpSynchronized = true;
+  } else {
+    ntpSynchronized = false;
+  }
+}
 
 void updateMode() {
   if (lastModeChange == 0) {
@@ -175,7 +224,7 @@ void loop() {
       wifiConnected = true;
       dnsServer.stop();
       Serial.println("[LOOP] DNS detenido");
-      syncNTP();
+      syncNTP();  // Non-blocking NTP sync
       // Immediately attempt MQTT connection now that WiFi is up
       connectMqtt();
     } else if (millis() - wifiConnectAttempt > 30000) {
@@ -185,6 +234,20 @@ void loop() {
         WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
         wifiConnectAttempt = millis();
       }
+    }
+  }
+
+  // Check NTP synchronization status periodically
+  checkNtpSynchronization();
+
+  // Handle WiFi connection timeout (30 seconds)
+  // If no WiFi connection after timeout, disable clock mode permanently
+  if (!wifiConnected && hasWifiCredentials && !wifiTimeoutOccurred) {
+    if (millis() - wifiConnectAttempt > 30000) {
+      wifiTimeoutOccurred = true;
+      modeClockEnabled = false;  // Disable clock since WiFi/NTP won't sync
+      isBootupPhase = false;      // Exit boot phase and show text
+      Serial.println("[BOOT] WiFi timeout - deshabilitado modo reloj");
     }
   }
 
@@ -203,7 +266,20 @@ void loop() {
   // Display service text if active (takes priority)
   if (serviceTextActive && serviceText.length() > 0) {
     displayServiceText();
+  } else if (isBootupPhase && hasWifiCredentials) {
+    // Show loading while waiting for WiFi/NTP sync
+    displayLoadingText();
   } else {
+    // If current mode is disabled, immediately switch to an enabled mode
+    if ((currentMode == 0 && !modeClockEnabled) || (currentMode == 1 && !modeTextEnabled)) {
+      if (modeClockEnabled) {
+        currentMode = 0;
+      } else if (modeTextEnabled) {
+        currentMode = 1;
+      }
+      lastModeChange = millis();  // Reset timer for new mode
+    }
+
     // Update mode logic if multiple modes enabled
     if (modeClockEnabled && modeTextEnabled) {
       updateMode();
