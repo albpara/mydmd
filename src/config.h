@@ -41,6 +41,7 @@
 
 // GIF Configuration
 #define GIF_DIRECTORY "/gifs"
+#define GIF_LIST_FILE "/lista.txt"
 #define GIF_MAX_DURATION 30000  // ms, max single GIF play time
 
 #endif // CONFIG_H

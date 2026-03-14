@@ -130,126 +130,60 @@ void GIFDraw(GIFDRAW *pDraw) {
   }
 }
 
-// ==================== GIF Inventory (zero-RAM, recursive) ====================
+// ==================== GIF Inventory (lista.txt based) ====================
 
-// Helper: check if filename ends with .gif (case-insensitive)
-static bool isGifFile(const char* fname) {
-  size_t len = strlen(fname);
-  if (len < 5) return false;
-  const char* ext = fname + len - 4;
-  return (strcasecmp(ext, ".gif") == 0);
-}
-
-// Recursively count GIF files in dirPath and all subdirectories
-static void countGifFilesInDir(const char* dirPath) {
-  File dir = SD.open(dirPath);
-  if (!dir || !dir.isDirectory()) {
-    Serial.printf("[GIF] Cannot open dir: %s\n", dirPath);
-    if (dir) dir.close();
+// Count lines in lista.txt to determine total GIF count
+void countGifFiles() {
+  if (!sdMounted) {
+    Serial.println("[GIF] SD card not mounted, skipping");
     return;
   }
 
-  Serial.printf("[GIF] Scanning: %s\n", dirPath);
-  int localCount = 0;
-
-  File file = dir.openNextFile();
-  while (file) {
-    if (file.isDirectory()) {
-      char subPath[256];
-      const char* fname = file.name();
-      if (fname[0] == '/') {
-        strncpy(subPath, fname, sizeof(subPath) - 1);
-        subPath[sizeof(subPath) - 1] = '\0';
-      } else {
-        snprintf(subPath, sizeof(subPath), "%s/%s", dirPath, fname);
-      }
-      file.close();
-      countGifFilesInDir(subPath);
-    } else {
-      if (isGifFile(file.name())) {
-        totalGifFiles++;
-        localCount++;
-        if (totalGifFiles % 500 == 0) {
-          Serial.printf("[GIF] ... %d files found so far\n", totalGifFiles);
-        }
-      }
-      file.close();
-    }
-    file = dir.openNextFile();
-  }
-  dir.close();
-  Serial.printf("[GIF] %s -> %d gifs (total so far: %d)\n", dirPath, localCount, totalGifFiles);
-}
-
-// Count all GIF files under GIF_DIRECTORY (recursive)
-void countGifFiles() {
-  if (!sdMounted) {
-    Serial.println("[GIF] SD card not mounted, skipping scan");
+  File f = SD.open(GIF_LIST_FILE, FILE_READ);
+  if (!f) {
+    Serial.printf("[GIF] %s not found on SD card\n", GIF_LIST_FILE);
     return;
   }
 
   totalGifFiles = 0;
-  unsigned long scanStart = millis();
-  Serial.println("[GIF] Counting GIF files in " + String(GIF_DIRECTORY) + " (recursive)...");
-  countGifFilesInDir(GIF_DIRECTORY);
-  unsigned long scanTime = millis() - scanStart;
-  Serial.printf("[GIF] Scan complete: %d GIF files found in %lu ms\n", totalGifFiles, scanTime);
-}
+  unsigned long start = millis();
 
-// Recursively find the Nth GIF file across dirPath and all subdirectories.
-// *currentCount tracks position across recursive calls.
-static bool findGifByIndex(const char* dirPath, int targetIndex, int* currentCount, char* outPath, size_t outSize) {
-  File dir = SD.open(dirPath);
-  if (!dir || !dir.isDirectory()) {
-    if (dir) dir.close();
-    return false;
-  }
-
-  Serial.printf("[GIF] Seeking #%d in %s (at %d)\n", targetIndex, dirPath, *currentCount);
-  File file = dir.openNextFile();
-  while (file) {
-    if (file.isDirectory()) {
-      char subPath[256];
-      const char* fname = file.name();
-      if (fname[0] == '/') {
-        strncpy(subPath, fname, sizeof(subPath) - 1);
-        subPath[sizeof(subPath) - 1] = '\0';
-      } else {
-        snprintf(subPath, sizeof(subPath), "%s/%s", dirPath, fname);
-      }
-      file.close();
-      if (findGifByIndex(subPath, targetIndex, currentCount, outPath, outSize)) {
-        dir.close();
-        return true;
-      }
-    } else {
-      if (isGifFile(file.name())) {
-        if (*currentCount == targetIndex) {
-          const char* fname = file.name();
-          if (fname[0] == '/') {
-            strncpy(outPath, fname, outSize - 1);
-            outPath[outSize - 1] = '\0';
-          } else {
-            snprintf(outPath, outSize, "%s/%s", dirPath, fname);
-          }
-          file.close();
-          dir.close();
-          return true;
-        }
-        (*currentCount)++;
-      }
-      file.close();
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) {
+      totalGifFiles++;
     }
-    file = dir.openNextFile();
   }
-  dir.close();
-  return false;
+  f.close();
+
+  unsigned long elapsed = millis() - start;
+  Serial.printf("[GIF] lista.txt: %d entries loaded in %lu ms\n", totalGifFiles, elapsed);
 }
 
-// Get the path of the Nth .gif file by iterating all subdirectories on-demand.
+// Get the path of the Nth GIF by reading the Nth non-empty line from lista.txt
 bool getGifPathByIndex(int index, char *outPath, size_t outSize) {
+  File f = SD.open(GIF_LIST_FILE, FILE_READ);
+  if (!f) return false;
+
   int count = 0;
-  return findGifByIndex(GIF_DIRECTORY, index, &count, outPath, outSize);
+  bool found = false;
+
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    if (count == index) {
+      strncpy(outPath, line.c_str(), outSize - 1);
+      outPath[outSize - 1] = '\0';
+      found = true;
+      break;
+    }
+    count++;
+  }
+  f.close();
+  return found;
 }
 
 // ==================== Playback Control ====================
