@@ -15,12 +15,23 @@ extern MatrixPanel_I2S_DMA *dma_display;
 extern Preferences preferences;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
+extern bool modeGifEnabled;
 extern uint16_t modeClockDuration;
 extern uint16_t modeTextDuration;
+extern uint16_t modeGifDuration;
 extern String serviceText;
 extern uint16_t serviceTextDuration;
 extern bool serviceTextActive;
 extern uint32_t serviceTextStartTime;
+
+// GIF service externs
+extern String serviceGifPath;
+extern bool serviceGifActive;
+extern uint16_t serviceGifDuration;
+extern uint32_t serviceGifStartTime;
+extern int totalGifFiles;
+extern bool sdMounted;
+bool startSpecificGif(const char *path);
 
 // MQTT variables
 PubSubClient *mqttClient = nullptr;
@@ -32,7 +43,7 @@ String mqttClientName = "RetroPixelLED";
 String mqttTopicPrefix = "retropixel";
 bool mqttConnected = false;
 uint32_t lastMqttReconnect = 0;
-const uint32_t MQTT_RECONNECT_INTERVAL = 5000; // 5 seconds
+const uint32_t MQTT_RECONNECT_INTERVAL = 15000; // 15 seconds (avoid frequent blocking)
 uint32_t lastMqttStatePublish = 0;
 const uint32_t MQTT_STATE_PUBLISH_INTERVAL = 30000; // 30 seconds
 uint32_t lastMqttDiagPublish = 0;
@@ -94,6 +105,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     preferences.putBool("modeText", modeTextEnabled);
     preferences.end();
   }
+  // Mode control: gif
+  else if (strstr(topic, "/modes/gif/set")) {
+    modeGifEnabled = (strcasecmp(msg, "ON") == 0);
+    preferences.begin("wifi", false);
+    preferences.putBool("modeGif", modeGifEnabled);
+    preferences.end();
+  }
   // Duration control: clock
   else if (strstr(topic, "/modes/clockDuration/set")) {
     int dur = atoi(msg);
@@ -114,11 +132,25 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       preferences.end();
     }
   }
-  // Text service: JSON {"text": "message", "duration": seconds}
+  // Duration control: gif
+  else if (strstr(topic, "/modes/gifDuration/set")) {
+    int dur = atoi(msg);
+    if (dur >= 1 && dur <= 300) {
+      modeGifDuration = dur;
+      preferences.begin("wifi", false);
+      preferences.putInt("gifDur", dur);
+      preferences.end();
+    }
+  }
+  // Text/GIF service: JSON {"text": "...", "duration": seconds}
+  // If "text" value starts with / and ends with .gif, treat as GIF path
   else if (strstr(topic, "/text/set")) {
     // Simple C-string JSON parsing
     char* textStart = strstr(msg, "\"text\"");
     char* durStart = strstr(msg, "\"duration\"");
+    
+    String parsedText = "";
+    uint16_t parsedDuration = 0;
     
     if (textStart) {
       char* colon = strchr(textStart, ':');
@@ -129,7 +161,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           char* q2 = strchr(q1, '"');
           if (q2) {
             *q2 = '\0';
-            serviceText = String(q1);
+            parsedText = String(q1);
             *q2 = '"'; // restore
           }
         }
@@ -141,14 +173,30 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       if (colon) {
         uint16_t dur = atoi(colon + 1);
         if (dur >= 1 && dur <= 3600) {
-          serviceTextDuration = dur;
+          parsedDuration = dur;
         }
       }
     }
     
-    if (serviceText.length() > 0 && serviceTextDuration > 0) {
-      serviceTextActive = true;
-      serviceTextStartTime = millis();
+    if (parsedText.length() > 0 && parsedDuration > 0) {
+      // Check if payload is a GIF path (starts with / and ends with .gif)
+      if (parsedText.startsWith("/") &&
+          (parsedText.endsWith(".gif") || parsedText.endsWith(".GIF"))) {
+        // GIF service request
+        serviceTextActive = false;  // Cancel any active text
+        serviceGifPath = parsedText;
+        serviceGifDuration = parsedDuration;
+        serviceGifStartTime = millis();
+        serviceGifActive = true;
+        Serial.printf("[MQTT] Service GIF: %s (%ds)\n", parsedText.c_str(), parsedDuration);
+      } else {
+        // Text service request
+        serviceGifActive = false;  // Cancel any active GIF
+        serviceText = parsedText;
+        serviceTextDuration = parsedDuration;
+        serviceTextActive = true;
+        serviceTextStartTime = millis();
+      }
     }
   }
   // Reboot command
@@ -178,12 +226,19 @@ void publishModeStates() {
   snprintf(topic, sizeof(topic), "%s/modes/text/state", pfx);
   mqttClient->publish(topic, modeTextEnabled ? "ON" : "OFF", true);
   
+  snprintf(topic, sizeof(topic), "%s/modes/gif/state", pfx);
+  mqttClient->publish(topic, modeGifEnabled ? "ON" : "OFF", true);
+  
   snprintf(topic, sizeof(topic), "%s/modes/clockDuration/state", pfx);
   snprintf(val, sizeof(val), "%u", modeClockDuration);
   mqttClient->publish(topic, val, true);
   
   snprintf(topic, sizeof(topic), "%s/modes/textDuration/state", pfx);
   snprintf(val, sizeof(val), "%u", modeTextDuration);
+  mqttClient->publish(topic, val, true);
+  
+  snprintf(topic, sizeof(topic), "%s/modes/gifDuration/state", pfx);
+  snprintf(val, sizeof(val), "%u", modeGifDuration);
   mqttClient->publish(topic, val, true);
 }
 
@@ -275,7 +330,27 @@ void publishHomeAssistantDiscovery() {
     "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
   mqttClient->publish(topic, payload, true);
 
-  // 6. IP Address (Diagnostic sensor)
+  // 6. GIF Mode (Switch)
+  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/gif_mode/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"GIF Mode\",\"uniq_id\":\"rp_%s_gif\","
+    "\"stat_t\":\"%s/modes/gif/state\","
+    "\"cmd_t\":\"%s/modes/gif/set\","
+    "\"ic\":\"mdi:gif\","
+    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
+
+  // 7. GIF Duration (Number entity - Config)
+  snprintf(topic, sizeof(topic), "homeassistant/number/%s/gif_dur/config", did);
+  snprintf(payload, sizeof(payload),
+    "{\"name\":\"GIF Duration\",\"uniq_id\":\"rp_%s_gifdur\","
+    "\"stat_t\":\"%s/modes/gifDuration/state\","
+    "\"cmd_t\":\"%s/modes/gifDuration/set\","
+    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
+    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
+  mqttClient->publish(topic, payload, true);
+
+  // 8. IP Address (Diagnostic sensor)
   snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/ip/config", did);
   snprintf(payload, sizeof(payload),
     "{\"name\":\"IP Address\",\"uniq_id\":\"rp_%s_ip\","
@@ -318,7 +393,7 @@ void publishHomeAssistantDiscovery() {
     "\"ent_cat\":\"config\",\"ic\":\"mdi:message\",%s}", did, pfx, dev);
   mqttClient->publish(topic, payload, true);
 
-  Serial.println("[MQTT] HA Discovery complete (10 entities)");
+  Serial.println("[MQTT] HA Discovery complete (12 entities)");
 
   // Publish initial states
   publishDisplayStatus();
@@ -343,6 +418,7 @@ void connectMqtt() {
     mqttClient = new PubSubClient(espClient);
     mqttClient->setServer(mqttBroker.c_str(), mqttPort);
     mqttClient->setCallback(mqttCallback);
+    espClient.setTimeout(2);  // 2-second TCP timeout (default is ~15s)
     Serial.println("[MQTT] Client created");
   }
 
@@ -384,10 +460,16 @@ void connectMqtt() {
     snprintf(topic, sizeof(topic), "%s/modes/text/set", pfx);
     mqttClient->subscribe(topic);
     
+    snprintf(topic, sizeof(topic), "%s/modes/gif/set", pfx);
+    mqttClient->subscribe(topic);
+    
     snprintf(topic, sizeof(topic), "%s/modes/clockDuration/set", pfx);
     mqttClient->subscribe(topic);
     
     snprintf(topic, sizeof(topic), "%s/modes/textDuration/set", pfx);
+    mqttClient->subscribe(topic);
+    
+    snprintf(topic, sizeof(topic), "%s/modes/gifDuration/set", pfx);
     mqttClient->subscribe(topic);
     
     snprintf(topic, sizeof(topic), "%s/text/set", pfx);
@@ -499,10 +581,13 @@ void processMqtt() {
       publishDiagnostics();
     }
   } else {
-    // Attempt reconnect periodically
-    if (millis() - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
-      lastMqttReconnect = millis();
-      connectMqtt();
+    // Only attempt MQTT reconnect if WiFi is actually connected
+    if (WiFi.status() == WL_CONNECTED) {
+      if (millis() - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
+        lastMqttReconnect = millis();
+        Serial.println("[MQTT] Attempting reconnect...");
+        connectMqtt();
+      }
     }
   }
 }

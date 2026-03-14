@@ -14,8 +14,10 @@ extern bool wifiConnected;
 extern bool hasWifiCredentials;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
+extern bool modeGifEnabled;
 extern uint16_t modeClockDuration;
 extern uint16_t modeTextDuration;
+extern uint16_t modeGifDuration;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern DNSServer dnsServer;
@@ -49,8 +51,10 @@ void initWiFiManager() {
   scrollText = preferences.getString("scrollText", "MAXIMO Y VICTOR");
   modeClockEnabled = preferences.getBool("modeClock", true);
   modeTextEnabled = preferences.getBool("modeText", true);
+  modeGifEnabled = preferences.getBool("modeGif", true);
   modeClockDuration = preferences.getInt("clockDur", 10);
   modeTextDuration = preferences.getInt("textDur", 60);
+  modeGifDuration = preferences.getInt("gifDur", 30);
   preferences.end();
 
   Serial.println("[WIFI] Cargadas credenciales de Preferences");

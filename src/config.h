@@ -39,4 +39,8 @@
 // Loop Configuration
 #define LOOP_DELAY_MS 50
 
+// GIF Configuration
+#define GIF_DIRECTORY "/gifs"
+#define GIF_MAX_DURATION 30000  // ms, max single GIF play time
+
 #endif // CONFIG_H

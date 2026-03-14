@@ -14,6 +14,7 @@
 #include "display_manager.h"
 #include "mqtt_manager.h"
 #include "sd_manager.h"
+#include "gif_manager.h"
 
 const char* WIFI_SSID = "RetroPixelLED";
 const IPAddress softAPIP(192, 168, 4, 1);
@@ -41,9 +42,11 @@ uint32_t lastNtpCheck = 0;
 // Mode system variables
 bool modeClockEnabled = true;
 bool modeTextEnabled = true;
+bool modeGifEnabled = true;
 uint16_t modeClockDuration = 10; // seconds to display clock
 uint16_t modeTextDuration = 60; // seconds to display text
-uint8_t currentMode = 0; // 0: clock, 1: text
+uint16_t modeGifDuration = 30;  // seconds to display GIFs
+uint8_t currentMode = 0; // 0: clock, 1: text, 2: gif
 unsigned long lastModeChange = 0;
 
 // Display brightness control (MQTT)
@@ -111,7 +114,13 @@ void updateMode() {
   }
 
   // Get duration for current mode
-  uint16_t currentDuration = (currentMode == 0) ? modeClockDuration : modeTextDuration;
+  uint16_t currentDuration;
+  switch (currentMode) {
+    case 0: currentDuration = modeClockDuration; break;
+    case 1: currentDuration = modeTextDuration; break;
+    case 2: currentDuration = modeGifDuration; break;
+    default: currentDuration = modeTextDuration; break;
+  }
   unsigned long elapsed = millis() - lastModeChange;
   
   if (elapsed >= (currentDuration * 1000UL)) {
@@ -121,19 +130,22 @@ void updateMode() {
     int enabledModes = 0;
     if (modeClockEnabled) enabledModes++;
     if (modeTextEnabled) enabledModes++;
+    if (modeGifEnabled && totalGifFiles > 0) enabledModes++;
 
     if (enabledModes <= 1) return;
 
     // Switch to next enabled mode
     bool found = false;
-    for (int i = 0; i < 2; i++) {
-      currentMode = (currentMode + 1) % 2;
-      if ((currentMode == 0 && modeClockEnabled) || (currentMode == 1 && modeTextEnabled)) {
+    for (int i = 0; i < 3; i++) {
+      currentMode = (currentMode + 1) % 3;
+      if ((currentMode == 0 && modeClockEnabled) ||
+          (currentMode == 1 && modeTextEnabled) ||
+          (currentMode == 2 && modeGifEnabled && totalGifFiles > 0)) {
         found = true;
         break;
       }
     }
-    if (!found) currentMode = 0;
+    if (!found) currentMode = 1; // fallback to text
   }
 }
 
@@ -207,6 +219,9 @@ void setup() {
   initSDCard();
   listSDFiles();
 
+  // Initialize GIF Manager
+  initGifManager();
+
   initWiFiManager();
   delay(100);
   setupAsyncServer();
@@ -221,6 +236,15 @@ void setup() {
 }
 
 void loop() {
+  // Detect WiFi disconnection
+  if (wifiConnected && WiFi.status() != WL_CONNECTED) {
+    Serial.println("[LOOP] WiFi DESCONECTADO!");
+    wifiConnected = false;
+    mqttConnected = false;
+    ntpSynchronized = false;
+    wifiConnectAttempt = millis();  // Start reconnect timer
+  }
+
   if (!wifiConnected) {
     dnsServer.processNextRequest();
     if (WiFi.status() == WL_CONNECTED) {
@@ -236,7 +260,7 @@ void loop() {
     } else if (millis() - wifiConnectAttempt > 30000) {
       if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
         Serial.println("[LOOP] Reintentando WiFi...");
-        WiFi.mode(WIFI_STA);
+        WiFi.disconnect();
         WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
         wifiConnectAttempt = millis();
       }
@@ -267,27 +291,45 @@ void loop() {
     lastBrightness = displayBrightness;
   }
 
-  dma_display->fillScreen(0);
+  // Only clear screen when NOT playing a GIF (GIF draws its own frames)
+  bool isGifMode = (serviceGifActive && serviceGifPath.length() > 0) ||
+                   (!serviceTextActive && !isBootupPhase && currentMode == 2 && modeGifEnabled && totalGifFiles > 0);
+  if (!isGifMode) {
+    dma_display->fillScreen(0);
+  }
 
-  // Display service text if active (takes priority)
-  if (serviceTextActive && serviceText.length() > 0) {
+  // Priority 1: Service GIF (MQTT-requested specific GIF)
+  if (serviceGifActive && serviceGifPath.length() > 0) {
+    displayServiceGif();
+  }
+  // Priority 2: Service text (MQTT-requested text)
+  else if (serviceTextActive && serviceText.length() > 0) {
     displayServiceText();
   } else if (isBootupPhase && hasWifiCredentials) {
     // Show loading while waiting for WiFi/NTP sync
     displayLoadingText();
   } else {
     // If current mode is disabled, immediately switch to an enabled mode
-    if ((currentMode == 0 && !modeClockEnabled) || (currentMode == 1 && !modeTextEnabled)) {
+    if ((currentMode == 0 && !modeClockEnabled) ||
+        (currentMode == 1 && !modeTextEnabled) ||
+        (currentMode == 2 && (!modeGifEnabled || totalGifFiles == 0))) {
       if (modeClockEnabled) {
         currentMode = 0;
       } else if (modeTextEnabled) {
         currentMode = 1;
+      } else if (modeGifEnabled && totalGifFiles > 0) {
+        currentMode = 2;
       }
-      lastModeChange = millis();  // Reset timer for new mode
+      lastModeChange = millis();
     }
 
-    // Update mode logic if multiple modes enabled
-    if (modeClockEnabled && modeTextEnabled) {
+    // Count enabled modes for auto-cycling
+    int enabledModes = 0;
+    if (modeClockEnabled) enabledModes++;
+    if (modeTextEnabled) enabledModes++;
+    if (modeGifEnabled && totalGifFiles > 0) enabledModes++;
+
+    if (enabledModes > 1) {
       updateMode();
     }
 
@@ -296,8 +338,9 @@ void loop() {
       displayClock();
     } else if (currentMode == 1 && modeTextEnabled) {
       displayScrollText();
+    } else if (currentMode == 2 && modeGifEnabled && totalGifFiles > 0) {
+      displayGif();
     } else if (!wifiConnected && modeClockEnabled && currentMode == 0) {
-      // Show text if clock is selected but no WiFi
       displayScrollText();
     }
   }
