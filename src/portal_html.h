@@ -8,13 +8,14 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RetroPixel LED</title>
-  <style>*{font-family:'Courier New',Courier,monospace;margin:0;padding:0;box-sizing:border-box}body{background:#a2a2a2;color:#000;padding:20px;min-height:100vh;display:flex;justify-content:center;flex-direction:column}h1{text-align:center;font-size:28px;font-weight:700;margin-bottom:20px;text-shadow:-.3rem .3rem 0 rgba(29,30,28,.26);color:#fff}.c{max-width:800px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:-.6rem .6rem 0 rgba(29,30,28,.26)}.c>h1{font-size:18px;padding:12px;border-bottom:2px solid #000;margin:0;text-shadow:none;color:#000}fieldset{border:2px solid #000;margin:15px;padding:15px;background:#f5f5f5}legend{font-weight:700;border:2px solid #000;padding:4px 8px;background:#dadad3}label{display:block;font-weight:700;margin:12px 0 6px;font-size:12px}.mode-label{display:flex;align-items:center;margin:12px 0 6px;font-weight:700}.mode-input{margin-right:8px;cursor:pointer}input,textarea{width:100%;border:2px solid #000;background:#dadad3;padding:8px;font-family:inherit;font-size:12px;margin-bottom:10px}input:focus,textarea:focus{outline:0;background:#e8e8e1}button{width:100%;padding:10px;background:#dadad3;border:2px solid #000;font-weight:700;cursor:pointer;margin:10px 0;font-size:12px;font-family:inherit}button:hover{background:#c8c8c1}button:active{transform:translate(-2px,2px);box-shadow:-.2rem .2rem 0 rgba(29,30,28,.26)}.msg{display:none;padding:10px;margin:10px 0;border:2px solid #000;font-size:12px;background:#f5f5f5}.msg.show{display:block}.msg.ok{background:#d4edda;color:#155724}.msg.er{background:#f8d7da;color:#721c24}</style>
+  <style>*{font-family:'Courier New',Courier,monospace;margin:0;padding:0;box-sizing:border-box}body{background:#a2a2a2;color:#000;padding:20px;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;flex-direction:column}h1{text-align:center;font-size:28px;font-weight:700;margin-bottom:20px;text-shadow:-.3rem .3rem 0 rgba(29,30,28,.26);color:#fff;width:100%}.c{width:100%;max-width:1400px;margin:0 auto;background:#fff;border:2px solid #000;box-shadow:-.6rem .6rem 0 rgba(29,30,28,.26)}.c>h1{font-size:18px;padding:12px;border-bottom:2px solid #000;margin:0;text-shadow:none;color:#000}.grid{display:grid;grid-template-columns:1fr;gap:0;padding:0}@media(min-width:700px){.grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:1100px){.grid{grid-template-columns:repeat(4,1fr)}}.span2{grid-column:span 1}@media(min-width:700px){.span2{grid-column:span 2}}fieldset{border:2px solid #000;margin:15px;padding:15px;background:#f5f5f5}legend{font-weight:700;border:2px solid #000;padding:4px 8px;background:#dadad3}label{display:block;font-weight:700;margin:12px 0 6px;font-size:12px}.mode-label{display:flex;align-items:center;margin:12px 0 6px;font-weight:700}.mode-input{margin-right:8px;cursor:pointer}input,textarea{width:100%;border:2px solid #000;background:#dadad3;padding:8px;font-family:inherit;font-size:12px;margin-bottom:10px}input:focus,textarea:focus{outline:0;background:#e8e8e1}button{width:100%;padding:10px;background:#dadad3;border:2px solid #000;font-weight:700;cursor:pointer;margin:10px 0;font-size:12px;font-family:inherit}button:hover{background:#c8c8c1}button:active{transform:translate(-2px,2px);box-shadow:-.2rem .2rem 0 rgba(29,30,28,.26)}.msg{display:none;padding:10px;margin:10px 0;border:2px solid #000;font-size:12px;background:#f5f5f5}.msg.show{display:block}.msg.ok{background:#d4edda;color:#155724}.msg.er{background:#f8d7da;color:#721c24}</style>
 </head>
 <body>
   <h1>RETRO PIXEL</h1>
   <div class="c">
     <h1>Settings</h1>
 
+    <div class="grid">
     <fieldset>
       <legend>WiFi Configuration</legend>
       <label>SSID:</label>
@@ -45,7 +46,7 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div id="mmsg" class="msg"></div>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="span2">
       <legend>Home Assistant / MQTT</legend>
       <label>Broker Address:</label>
       <input id="mb" placeholder="192.168.1.100" type="text">
@@ -69,6 +70,7 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button onclick="rb()">Reboot Device</button>
       <div id="sm" class="msg"></div>
     </fieldset>
+    </div>
   </div>
 
   <script>

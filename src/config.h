@@ -20,6 +20,12 @@
 #define LAT_PIN 4
 #define OE_PIN 15
 
+// SD Card SPI Configuration
+#define SD_CS_PIN 5
+#define SD_CLK_PIN 18
+#define SD_MOSI_PIN 23
+#define SD_MISO_PIN 19
+
 // Display Settings
 #define BRIGHTNESS 16
 #define TEXT_SIZE 2
@@ -32,5 +38,9 @@
 
 // Loop Configuration
 #define LOOP_DELAY_MS 50
+
+// GIF Configuration
+#define GIF_DIRECTORY "/gifs"
+#define GIF_MAX_DURATION 30000  // ms, max single GIF play time
 
 #endif // CONFIG_H

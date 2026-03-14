@@ -11,10 +11,13 @@ extern String ssidWifi;
 extern String passwordWifi;
 extern String scrollText;
 extern bool wifiConnected;
+extern bool hasWifiCredentials;
 extern bool modeClockEnabled;
 extern bool modeTextEnabled;
+extern bool modeGifEnabled;
 extern uint16_t modeClockDuration;
 extern uint16_t modeTextDuration;
+extern uint16_t modeGifDuration;
 extern uint32_t wifiConnectAttempt;
 extern Preferences preferences;
 extern DNSServer dnsServer;
@@ -25,26 +28,16 @@ extern const IPAddress softAPIP;
 extern const IPAddress gateway;
 extern const IPAddress subnet;
 
-// Synchronize time with NTP server
+// Non-blocking NTP time synchronization
 void syncNTP() {
   if (!wifiConnected) return;
 
-  Serial.println("[NTP] Sincronizando hora...");
+  Serial.println("[NTP] Iniciando sincronización de hora (no bloqueante)...");
+  // configTime starts NTP sync in background without blocking
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-
-  time_t now = time(nullptr);
-  int attempts = 0;
-  while (now < 24 * 3600 && attempts < 20) {
-    delay(500);
-    now = time(nullptr);
-    attempts++;
-  }
-
-  if (now > 24 * 3600) {
-    Serial.println("[NTP] Hora sincronizada");
-  } else {
-    Serial.println("[NTP] Error al sincronizar");
-  }
+  // The ESP32 will complete NTP sync asynchronously
+  // Time will be available once sync completes, no blocking needed
+  Serial.println("[NTP] NTP sincronización en progreso (sin bloquear)");
 }
 
 // Initialize WiFi manager, either connect to saved network or start AP
@@ -58,15 +51,20 @@ void initWiFiManager() {
   scrollText = preferences.getString("scrollText", "MAXIMO Y VICTOR");
   modeClockEnabled = preferences.getBool("modeClock", true);
   modeTextEnabled = preferences.getBool("modeText", true);
+  modeGifEnabled = preferences.getBool("modeGif", true);
   modeClockDuration = preferences.getInt("clockDur", 10);
   modeTextDuration = preferences.getInt("textDur", 60);
+  modeGifDuration = preferences.getInt("gifDur", 30);
   preferences.end();
 
   Serial.println("[WIFI] Cargadas credenciales de Preferences");
   if (ssidWifi.length() > 0) {
     Serial.println("[WIFI] SSID guardado: " + ssidWifi);
+    hasWifiCredentials = true;
   } else {
-    Serial.println("[WIFI] Sin credenciales guardadas");
+    Serial.println("[WIFI] Sin credenciales guardadas - deshabilitado modo reloj");
+    hasWifiCredentials = false;
+    modeClockEnabled = false;  // No clock without WiFi/NTP
   }
 
   // Start WiFi connection if credentials exist (non-blocking)
