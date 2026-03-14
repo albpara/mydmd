@@ -135,13 +135,13 @@ void GIFDraw(GIFDRAW *pDraw) {
 // Count lines in lista.txt to determine total GIF count
 void countGifFiles() {
   if (!sdMounted) {
-    Serial.println("[GIF] SD card not mounted, skipping");
+    LOG("[GIF] SD card not mounted, skipping");
     return;
   }
 
   File f = SD.open(GIF_LIST_FILE, FILE_READ);
   if (!f) {
-    Serial.printf("[GIF] %s not found on SD card\n", GIF_LIST_FILE);
+    LOGF("[GIF] %s not found on SD card\n", GIF_LIST_FILE);
     return;
   }
 
@@ -158,7 +158,7 @@ void countGifFiles() {
   f.close();
 
   unsigned long elapsed = millis() - start;
-  Serial.printf("[GIF] lista.txt: %d entries loaded in %lu ms\n", totalGifFiles, elapsed);
+  LOGF("[GIF] lista.txt: %d entries loaded in %lu ms\n", totalGifFiles, elapsed);
 }
 
 // Get the path of the Nth GIF by reading the Nth non-empty line from lista.txt
@@ -201,18 +201,20 @@ int pickRandomGifIndex() {
 }
 
 // Open a GIF file for playback. Returns true if successful.
-bool openGif(const char *path) {
+bool openGif(const char *path, bool silent = false) {
   if (gifPlaying) {
     gif.close();
     gifPlaying = false;
   }
 
   if (!gif.open(path, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-    Serial.printf("[GIF] Failed to open: %s\n", path);
+    LOGF("[GIF] Failed to open: %s\n", path);
     return false;
   }
 
-  Serial.printf("[GIF] Playing: %s (%dx%d)\n", path, gif.getCanvasWidth(), gif.getCanvasHeight());
+  if (!silent) {
+    LOGF("[GIF] Playing: %s (%dx%d)\n", path, gif.getCanvasWidth(), gif.getCanvasHeight());
+  }
   gifPlaying = true;
   gifStartTime = millis();
   gifNextFrameTime = 0;
@@ -230,7 +232,7 @@ bool startRandomGif() {
 
   // Look up the file path by index (directory seek)
   if (!getGifPathByIndex(idx, currentGifPath, sizeof(currentGifPath))) {
-    Serial.printf("[GIF] Could not find GIF at index %d\n", idx);
+    LOGF("[GIF] Could not find GIF at index %d\n", idx);
     return false;
   }
 
@@ -240,13 +242,13 @@ bool startRandomGif() {
 // Start playing a specific GIF by path (for MQTT service)
 bool startSpecificGif(const char *path) {
   if (!sdMounted) {
-    Serial.println("[GIF] SD not mounted");
+    LOG("[GIF] SD not mounted");
     return false;
   }
 
   // Verify file exists
   if (!SD.exists(path)) {
-    Serial.printf("[GIF] File not found: %s\n", path);
+    LOGF("[GIF] File not found: %s\n", path);
     return false;
   }
 
@@ -312,7 +314,7 @@ void displayServiceGif() {
         gif.close();
         gifPlaying = false;
       }
-      Serial.println("[GIF] Service GIF duration expired");
+      LOG("[GIF] Service GIF duration expired");
       return;
     }
   }
@@ -321,7 +323,7 @@ void displayServiceGif() {
   if (!gifPlaying) {
     if (!startSpecificGif(serviceGifPath.c_str())) {
       serviceGifActive = false;
-      Serial.println("[GIF] Service GIF failed to open, deactivating");
+      LOG("[GIF] Service GIF failed to open, deactivating");
       return;
     }
   }
@@ -333,10 +335,54 @@ void displayServiceGif() {
   }
 }
 
-// ==================== Initialization ====================
+// ==================== Splash GIF ====================
+
+bool splashGifReady = false;
+
+// Open splash.gif for looping display during boot
+void initSplashGif() {
+  if (!sdMounted) return;
+  if (!SD.exists(SPLASH_GIF_FILE)) {
+    LOGF("[GIF] Splash file not found: %s\n", SPLASH_GIF_FILE);
+    return;
+  }
+  if (openGif(SPLASH_GIF_FILE)) {
+    splashGifReady = true;
+    LOG("[GIF] Splash GIF ready");
+  }
+}
+
+// Display one frame of splash.gif (non-blocking, loops)
+void displaySplashGif() {
+  if (!splashGifReady) return;
+
+  if (!gifPlaying) {
+    // Re-open to loop (silent — no log spam)
+    if (!openGif(SPLASH_GIF_FILE, true)) {
+      splashGifReady = false;
+      return;
+    }
+  }
+
+  if (!playGifFrame()) {
+    // GIF ended, re-open for loop (silent)
+    openGif(SPLASH_GIF_FILE, true);
+  }
+}
+
+// Stop splash GIF playback
+void stopSplashGif() {
+  if (gifPlaying) {
+    gif.close();
+    gifPlaying = false;
+  }
+  splashGifReady = false;
+}
+
+// ==================== Initialization ======================================
 
 void initGifManager() {
-  Serial.println("\n========== GIF Manager ==========");
+  LOG("\n========== GIF Manager ==========");
   gif.begin(LITTLE_ENDIAN_PIXELS);
   randomSeed(analogRead(0) + millis());
   countGifFiles();

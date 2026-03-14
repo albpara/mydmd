@@ -46,7 +46,7 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div id="mmsg" class="msg"></div>
     </fieldset>
 
-    <fieldset class="span2">
+    <fieldset>
       <legend>Home Assistant / MQTT</legend>
       <label>Broker Address:</label>
       <input id="mb" placeholder="192.168.1.100" type="text">

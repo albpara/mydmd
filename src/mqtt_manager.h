@@ -23,6 +23,8 @@ extern String serviceText;
 extern uint16_t serviceTextDuration;
 extern bool serviceTextActive;
 extern uint32_t serviceTextStartTime;
+extern int serviceTextScrollX;
+extern bool serviceTextScrollCompleted;
 
 // GIF service externs
 extern String serviceGifPath;
@@ -79,7 +81,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   memcpy(msg, payload, copyLen);
   msg[copyLen] = '\0';
 
-  Serial.printf("[MQTT] %s: %s\n", topic, msg);
+  LOGF("[MQTT] %s: %s\n", topic, msg);
 
   // Control topic: power (on/off)
   if (strstr(topic, "/power/set")) {
@@ -188,14 +190,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         serviceGifDuration = parsedDuration;
         serviceGifStartTime = millis();
         serviceGifActive = true;
-        Serial.printf("[MQTT] Service GIF: %s (%ds)\n", parsedText.c_str(), parsedDuration);
+        LOGF("[MQTT] Service GIF: %s (%ds)\n", parsedText.c_str(), parsedDuration);
       } else {
-        // Text service request
+        // Text service request (notification — does not override scrollText)
         serviceGifActive = false;  // Cancel any active GIF
         serviceText = parsedText;
         serviceTextDuration = parsedDuration;
         serviceTextActive = true;
         serviceTextStartTime = millis();
+        serviceTextScrollX = DISPLAY_WIDTH;  // Reset scroll position
+        serviceTextScrollCompleted = false;  // Require at least one full cycle
       }
     }
   }
@@ -261,20 +265,29 @@ void publishDiagnostics() {
   mqttClient->publish(topic, val, true);
 }
 
+// Helper to publish a single HA discovery entity
+static void publishHAEntity(const char* did, const char* pfx, const char* dev,
+  const char* haType, const char* objId, const char* name, const char* uid,
+  const char* statSuffix, const char* cmdSuffix, const char* extra) {
+  char topic[80], payload[512];
+  snprintf(topic, sizeof(topic), "homeassistant/%s/%s/%s/config", haType, did, objId);
+  int n = snprintf(payload, sizeof(payload), "{\"name\":\"%s\",\"uniq_id\":\"rp_%s_%s\"", name, did, uid);
+  if (statSuffix) n += snprintf(payload+n, sizeof(payload)-n, ",\"stat_t\":\"%s/%s\"", pfx, statSuffix);
+  if (cmdSuffix) n += snprintf(payload+n, sizeof(payload)-n, ",\"cmd_t\":\"%s/%s\"", pfx, cmdSuffix);
+  if (extra) n += snprintf(payload+n, sizeof(payload)-n, ",%s", extra);
+  snprintf(payload+n, sizeof(payload)-n, ",%s}", dev);
+  mqttClient->publish(topic, payload, true);
+}
+
 // Publish Home Assistant MQTT Discovery messages
 void publishHomeAssistantDiscovery() {
   if (!mqttClient || !mqttClient->connected()) return;
 
-  Serial.println("[MQTT] Publishing HA Discovery");
+  LOG("[MQTT] Publishing HA Discovery");
 
   const char* did = deviceId.c_str();
   const char* pfx = mqttTopicPrefix.c_str();
 
-  // Reusable stack buffers
-  char topic[80];
-  char payload[512];
-
-  // Device info snippet (using HA abbreviated keys)
   char dev[180];
   snprintf(dev, sizeof(dev),
     "\"dev\":{\"ids\":[\"rp_%s\"],"
@@ -283,117 +296,39 @@ void publishHomeAssistantDiscovery() {
     "\"name\":\"RetroPixel LED\","
     "\"sw\":\"1.0\"}", did);
 
-  // 1. Display power (Light entity)
-  snprintf(topic, sizeof(topic), "homeassistant/light/%s/display/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Display\",\"uniq_id\":\"rp_%s_disp\","
-    "\"stat_t\":\"%s/display/state\","
-    "\"cmd_t\":\"%s/display/power/set\","
-    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
+  // Shared extra fragments
+  static const char ONOFF[] = "\"pl_on\":\"ON\",\"pl_off\":\"OFF\"";
+  static const char NUM_CFG[] = "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\",\"min\":1,\"max\":300,\"step\":1";
 
-  // 2. Clock Mode (Switch)
-  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/clock_mode/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Clock Mode\",\"uniq_id\":\"rp_%s_clk\","
-    "\"stat_t\":\"%s/modes/clock/state\","
-    "\"cmd_t\":\"%s/modes/clock/set\","
-    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
+  // Light
+  publishHAEntity(did, pfx, dev, "light", "display", "Display", "disp",
+    "display/state", "display/power/set", ONOFF);
+  // Switches
+  publishHAEntity(did, pfx, dev, "switch", "clock_mode", "Mode Clock", "clk",
+    "modes/clock/state", "modes/clock/set", ONOFF);
+  publishHAEntity(did, pfx, dev, "switch", "text_mode", "Mode Text", "txt",
+    "modes/text/state", "modes/text/set", ONOFF);
+  publishHAEntity(did, pfx, dev, "switch", "gif_mode", "Mode GIF", "gif",
+    "modes/gif/state", "modes/gif/set", "\"ic\":\"mdi:gif\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\"");
+  // Number entities
+  publishHAEntity(did, pfx, dev, "number", "clock_dur", "Duration Clock", "clkdur",
+    "modes/clockDuration/state", "modes/clockDuration/set", NUM_CFG);
+  publishHAEntity(did, pfx, dev, "number", "text_dur", "Duration Text", "txtdur",
+    "modes/textDuration/state", "modes/textDuration/set", NUM_CFG);
+  publishHAEntity(did, pfx, dev, "number", "gif_dur", "Duration GIF", "gifdur",
+    "modes/gifDuration/state", "modes/gifDuration/set", NUM_CFG);
+  // Diagnostic sensors
+  publishHAEntity(did, pfx, dev, "sensor", "ip", "IP Address", "ip",
+    "system/ip/state", NULL, "\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:ip\"");
+  publishHAEntity(did, pfx, dev, "sensor", "uptime", "Uptime", "up",
+    "system/uptime/state", NULL, "\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:clock-outline\"");
+  publishHAEntity(did, pfx, dev, "sensor", "rssi", "Link Quality", "rssi",
+    "system/link_quality/state", NULL, "\"unit_of_meas\":\"dBm\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:signal\"");
+  // Button
+  publishHAEntity(did, pfx, dev, "button", "reboot", "Reboot", "reboot",
+    NULL, "system/reboot", "\"pl_press\":\"true\",\"ent_cat\":\"config\",\"ic\":\"mdi:restart\"");
 
-  // 3. Text Mode (Switch)
-  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/text_mode/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Text Mode\",\"uniq_id\":\"rp_%s_txt\","
-    "\"stat_t\":\"%s/modes/text/state\","
-    "\"cmd_t\":\"%s/modes/text/set\","
-    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 4. Clock Duration (Number entity - Config)
-  snprintf(topic, sizeof(topic), "homeassistant/number/%s/clock_dur/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Clock Duration\",\"uniq_id\":\"rp_%s_clkdur\","
-    "\"stat_t\":\"%s/modes/clockDuration/state\","
-    "\"cmd_t\":\"%s/modes/clockDuration/set\","
-    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
-    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 5. Text Duration (Number entity - Config)
-  snprintf(topic, sizeof(topic), "homeassistant/number/%s/text_dur/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Text Duration\",\"uniq_id\":\"rp_%s_txtdur\","
-    "\"stat_t\":\"%s/modes/textDuration/state\","
-    "\"cmd_t\":\"%s/modes/textDuration/set\","
-    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
-    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 6. GIF Mode (Switch)
-  snprintf(topic, sizeof(topic), "homeassistant/switch/%s/gif_mode/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"GIF Mode\",\"uniq_id\":\"rp_%s_gif\","
-    "\"stat_t\":\"%s/modes/gif/state\","
-    "\"cmd_t\":\"%s/modes/gif/set\","
-    "\"ic\":\"mdi:gif\","
-    "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 7. GIF Duration (Number entity - Config)
-  snprintf(topic, sizeof(topic), "homeassistant/number/%s/gif_dur/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"GIF Duration\",\"uniq_id\":\"rp_%s_gifdur\","
-    "\"stat_t\":\"%s/modes/gifDuration/state\","
-    "\"cmd_t\":\"%s/modes/gifDuration/set\","
-    "\"unit_of_meas\":\"s\",\"ent_cat\":\"config\","
-    "\"min\":1,\"max\":300,\"step\":1,%s}", did, pfx, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 8. IP Address (Diagnostic sensor)
-  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/ip/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"IP Address\",\"uniq_id\":\"rp_%s_ip\","
-    "\"stat_t\":\"%s/system/ip/state\","
-    "\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:ip\",%s}", did, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 7. Uptime (Diagnostic sensor)
-  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/uptime/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Uptime\",\"uniq_id\":\"rp_%s_up\","
-    "\"stat_t\":\"%s/system/uptime/state\","
-    "\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\","
-    "\"ic\":\"mdi:clock-outline\",%s}", did, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 8. Link Quality (Diagnostic sensor)
-  snprintf(topic, sizeof(topic), "homeassistant/sensor/%s/rssi/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Link Quality\",\"uniq_id\":\"rp_%s_rssi\","
-    "\"stat_t\":\"%s/system/link_quality/state\","
-    "\"unit_of_meas\":\"dBm\",\"ent_cat\":\"diagnostic\","
-    "\"ic\":\"mdi:signal\",%s}", did, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 9. Reboot Button
-  snprintf(topic, sizeof(topic), "homeassistant/button/%s/reboot/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Reboot\",\"uniq_id\":\"rp_%s_reboot\","
-    "\"cmd_t\":\"%s/system/reboot\","
-    "\"pl_press\":\"true\",\"ent_cat\":\"config\","
-    "\"ic\":\"mdi:restart\",%s}", did, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  // 10. Text Service
-  snprintf(topic, sizeof(topic), "homeassistant/text/%s/text_svc/config", did);
-  snprintf(payload, sizeof(payload),
-    "{\"name\":\"Display Text\",\"uniq_id\":\"rp_%s_textsvc\","
-    "\"cmd_t\":\"%s/text/set\","
-    "\"ent_cat\":\"config\",\"ic\":\"mdi:message\",%s}", did, pfx, dev);
-  mqttClient->publish(topic, payload, true);
-
-  Serial.println("[MQTT] HA Discovery complete (12 entities)");
+  LOG("[MQTT] HA Discovery complete");
 
   // Publish initial states
   publishDisplayStatus();
@@ -404,12 +339,12 @@ void publishHomeAssistantDiscovery() {
 // Connect to MQTT broker
 void connectMqtt() {
   if (!wifiConnected) {
-    Serial.println("[MQTT] Skipping: No WiFi connection");
+    LOG("[MQTT] Skipping: No WiFi connection");
     return;
   }
 
   if (mqttBroker.length() == 0) {
-    Serial.println("[MQTT] Skipping: Broker not configured");
+    LOG("[MQTT] Skipping: Broker not configured");
     return;
   }
 
@@ -419,7 +354,7 @@ void connectMqtt() {
     mqttClient->setServer(mqttBroker.c_str(), mqttPort);
     mqttClient->setCallback(mqttCallback);
     espClient.setTimeout(2);  // 2-second TCP timeout (default is ~15s)
-    Serial.println("[MQTT] Client created");
+    LOG("[MQTT] Client created");
   }
 
   if (mqttClient->connected()) {
@@ -427,7 +362,7 @@ void connectMqtt() {
     return;
   }
 
-  Serial.println("[MQTT] Connecting to broker: " + mqttBroker + ":" + String(mqttPort));
+  LOG("[MQTT] Connecting to broker: " + mqttBroker + ":" + String(mqttPort));
 
   bool connected = false;
 
@@ -437,15 +372,15 @@ void connectMqtt() {
       mqttUsername.c_str(),
       mqttPassword.c_str()
     );
-    Serial.println("[MQTT] Attempting connection with credentials as: " + mqttClientName);
+    LOG("[MQTT] Attempting connection with credentials as: " + mqttClientName);
   } else {
     connected = mqttClient->connect(mqttClientName.c_str());
-    Serial.println("[MQTT] Attempting connection without credentials as: " + mqttClientName);
+    LOG("[MQTT] Attempting connection without credentials as: " + mqttClientName);
   }
 
   if (connected) {
     mqttConnected = true;
-    Serial.println("[MQTT] Connected!");
+    LOG("[MQTT] Connected!");
 
     // Subscribe to control topics using stack buffer
     char topic[60];
@@ -482,16 +417,16 @@ void connectMqtt() {
     publishHomeAssistantDiscovery();
   } else {
     mqttConnected = false;
-    Serial.printf("[MQTT] Connection failed, code: %d\n", mqttClient->state());
+    LOGF("[MQTT] Connection failed, code: %d\n", mqttClient->state());
   }
 }
 
 // Initialize MQTT from saved preferences
 void initMqtt() {
-  Serial.println("\n========== MQTT Setup ==========");
+  LOG("\n========== MQTT Setup ==========");
 
   initializeDeviceId();
-  Serial.println("[MQTT] Device ID: " + deviceId);
+  LOG("[MQTT] Device ID: " + deviceId);
 
   // Load MQTT settings from preferences
   preferences.begin("mqtt", false);
@@ -503,10 +438,10 @@ void initMqtt() {
   mqttTopicPrefix = preferences.getString("prefix", "retropixel");
   preferences.end();
 
-  Serial.println("[MQTT] Broker: " + mqttBroker);
-  Serial.println("[MQTT] Port: " + String(mqttPort));
-  Serial.println("[MQTT] Client Name: " + mqttClientName);
-  Serial.println("[MQTT] Topic Prefix: " + mqttTopicPrefix);
+  LOG("[MQTT] Broker: " + mqttBroker);
+  LOG("[MQTT] Port: " + String(mqttPort));
+  LOG("[MQTT] Client Name: " + mqttClientName);
+  LOG("[MQTT] Topic Prefix: " + mqttTopicPrefix);
 
   // Ensure any old client is disconnected
   if (mqttClient) {
@@ -521,7 +456,7 @@ void initMqtt() {
 
 // Update MQTT settings (typically called from web API)
 void updateMqttSettings(String broker, uint16_t port, String username, String password, String clientname, String prefix) {
-  Serial.println("[MQTT] Updating settings");
+  LOG("[MQTT] Updating settings");
 
   mqttBroker = broker;
   mqttPort = port;
@@ -540,7 +475,7 @@ void updateMqttSettings(String broker, uint16_t port, String username, String pa
   preferences.putString("prefix", prefix);
   preferences.end();
 
-  Serial.println("[MQTT] Settings saved and will reconnect");
+  LOG("[MQTT] Settings saved and will reconnect");
 
   // Reconnect with new settings
   if (mqttClient && mqttClient->connected()) {
@@ -553,7 +488,7 @@ void updateMqttSettings(String broker, uint16_t port, String username, String pa
 void processMqtt() {
   // Check for pending reboot command
   if (pendingReboot) {
-    Serial.println("[MQTT] Executing reboot...");
+    LOG("[MQTT] Executing reboot...");
     delay(500);
     ESP.restart();
   }
@@ -585,7 +520,7 @@ void processMqtt() {
     if (WiFi.status() == WL_CONNECTED) {
       if (millis() - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
         lastMqttReconnect = millis();
-        Serial.println("[MQTT] Attempting reconnect...");
+        LOG("[MQTT] Attempting reconnect...");
         connectMqtt();
       }
     }
