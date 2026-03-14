@@ -1,6 +1,19 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// Debug logging (set to 1 to enable Serial output, 0 to save ~5KB flash)
+#ifndef DEBUG_LOG
+  #define DEBUG_LOG 0
+#endif
+
+#if DEBUG_LOG
+  #define LOG(x) Serial.println(x)
+  #define LOGF(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)
+#else
+  #define LOG(x) ((void)0)
+  #define LOGF(fmt, ...) ((void)0)
+#endif
+
 // Matrix Panel Configuration
 #define PANEL_WIDTH 64
 #define PANEL_HEIGHT 32
@@ -42,6 +55,7 @@
 // GIF Configuration
 #define GIF_DIRECTORY "/gifs"
 #define GIF_LIST_FILE "/lista.txt"
+#define SPLASH_GIF_FILE "/splash.gif"
 #define GIF_MAX_DURATION 30000  // ms, max single GIF play time
 
 #endif // CONFIG_H

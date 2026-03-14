@@ -32,17 +32,17 @@ extern const IPAddress subnet;
 void syncNTP() {
   if (!wifiConnected) return;
 
-  Serial.println("[NTP] Iniciando sincronización de hora (no bloqueante)...");
+  LOG("[NTP] Iniciando sincronización de hora (no bloqueante)...");
   // configTime starts NTP sync in background without blocking
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   // The ESP32 will complete NTP sync asynchronously
   // Time will be available once sync completes, no blocking needed
-  Serial.println("[NTP] NTP sincronización en progreso (sin bloquear)");
+  LOG("[NTP] NTP sincronización en progreso (sin bloquear)");
 }
 
 // Initialize WiFi manager, either connect to saved network or start AP
 void initWiFiManager() {
-  Serial.println("\n========== WiFi Manager ==========");
+  LOG("\n========== WiFi Manager ==========");
 
   // Load WiFi credentials and display settings from preferences
   preferences.begin("wifi", false);
@@ -57,37 +57,37 @@ void initWiFiManager() {
   modeGifDuration = preferences.getInt("gifDur", 30);
   preferences.end();
 
-  Serial.println("[WIFI] Cargadas credenciales de Preferences");
+  LOG("[WIFI] Cargadas credenciales de Preferences");
   if (ssidWifi.length() > 0) {
-    Serial.println("[WIFI] SSID guardado: " + ssidWifi);
+    LOG("[WIFI] SSID guardado: " + ssidWifi);
     hasWifiCredentials = true;
   } else {
-    Serial.println("[WIFI] Sin credenciales guardadas - deshabilitado modo reloj");
+    LOG("[WIFI] Sin credenciales guardadas - deshabilitado modo reloj");
     hasWifiCredentials = false;
     modeClockEnabled = false;  // No clock without WiFi/NTP
   }
 
   // Start WiFi connection if credentials exist (non-blocking)
   if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
-    Serial.println("[WIFI] Intentando conectar a: " + ssidWifi);
+    LOG("[WIFI] Intentando conectar a: " + ssidWifi);
     WiFi.mode(WIFI_AP_STA);  // Both AP and STA for fallback config portal
     WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
     wifiConnectAttempt = millis();
-    Serial.println("[WIFI] Conexion en progreso... (se completará en loop)");
+    LOG("[WIFI] Conexion en progreso... (se completará en loop)");
   } else {
     WiFi.mode(WIFI_AP);
   }
 
-  Serial.println("[WIFI] Iniciando Soft AP...");
+  LOG("[WIFI] Iniciando Soft AP...");
   WiFi.softAPConfig(softAPIP, gateway, subnet);
   bool ok = WiFi.softAP(WIFI_SSID);
 
   if (ok) {
-    Serial.println("[WIFI] Soft AP activo");
-    Serial.println("[WIFI] SSID: " + String(WIFI_SSID));
-    Serial.println("[WIFI] IP: " + WiFi.softAPIP().toString());
+    LOG("[WIFI] Soft AP activo");
+    LOG("[WIFI] SSID: " + String(WIFI_SSID));
+    LOG("[WIFI] IP: " + WiFi.softAPIP().toString());
   } else {
-    Serial.println("[WIFI] ERROR: No se pudo crear Soft AP");
+    LOG("[WIFI] ERROR: No se pudo crear Soft AP");
   }
 }
 

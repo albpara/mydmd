@@ -1,5 +1,6 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
@@ -52,16 +53,19 @@ unsigned long lastModeChange = 0;
 // Display brightness control (MQTT)
 int displayBrightness = BRIGHTNESS;
 
-// Text service variables
+// Text service variables (MQTT notification — does not override scrollText)
 String serviceText = "";
 uint16_t serviceTextDuration = 0;
 bool serviceTextActive = false;
 uint32_t serviceTextStartTime = 0;
+int serviceTextScrollX = SCROLL_START_X;
+bool serviceTextScrollCompleted = false;
 
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 float colorHue = 0.0;
 int textScrollX = SCROLL_START_X;
+bool scrollTextCycleCompleted = false;
 
 // Display loading text continuously during boot/NTP sync
 void displayLoadingText() {
@@ -98,8 +102,9 @@ void checkNtpSynchronization() {
   // This indicates time has been set from network
   if (now > 1577836800) {
     if (!ntpSynchronized) {
-      Serial.println("[NTP] Sincronización completada");
+      LOG("[NTP] Sincronización completada");
       isBootupPhase = false;  // Exit boot phase when NTP syncs
+      stopSplashGif();
     }
     ntpSynchronized = true;
   } else {
@@ -124,7 +129,11 @@ void updateMode() {
   unsigned long elapsed = millis() - lastModeChange;
   
   if (elapsed >= (currentDuration * 1000UL)) {
+    // Text mode: wait for at least one full scroll cycle before switching
+    if (currentMode == 1 && !scrollTextCycleCompleted) return;
+
     lastModeChange = millis();
+    scrollTextCycleCompleted = false;  // Reset for next time text mode is active
 
     // Count enabled modes
     int enabledModes = 0;
@@ -150,36 +159,36 @@ void updateMode() {
 }
 
 void setupAsyncServer() {
-  Serial.println("\n========== Web Server ==========");
+  LOG("\n========== Web Server ==========");
   
   // Setup all web server routes from the header
   setupWebServerRoutes();
   
   // Start the server
   server.begin();
-  Serial.println("[WEB] Servidor iniciado en puerto 80");
-  Serial.println("[WEB] Accede a: http://192.168.4.1");
+  LOG("[WEB] Servidor iniciado en puerto 80");
+  LOG("[WEB] Accede a: http://192.168.4.1");
 }
 
 void setupDNS() {
-  Serial.println("\n========== DNS Spoofing ==========");
+  LOG("\n========== DNS Spoofing ==========");
   dnsServer.setErrorReplyCode(DNSReplyCode::ServerFailure);
   bool ok = dnsServer.start(53, "*", softAPIP);
   if (ok) {
-    Serial.println("[DNS] Servidor DNS iniciado");
-    Serial.println("[DNS] Redirigiendo *.* -> " + softAPIP.toString());
+    LOG("[DNS] Servidor DNS iniciado");
+    LOG("[DNS] Redirigiendo *.* -> " + softAPIP.toString());
   } else {
-    Serial.println("[DNS] ERROR: No se pudo iniciar DNS");
+    LOG("[DNS] ERROR: No se pudo iniciar DNS");
   }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n\n========== RETRO PIXEL LED ==========");
-  Serial.println("[BOOT] Inicializando...");
+  LOG("\n\n========== RETRO PIXEL LED ==========");
+  LOG("[BOOT] Inicializando...");
 
-  Serial.println("[BOOT] Configurando GPIO matriz...");
+  LOG("[BOOT] Configurando GPIO matriz...");
   HUB75_I2S_CFG mxconfig(PANEL_WIDTH, PANEL_HEIGHT, 2);
   mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_10M;
   mxconfig.latch_blanking = 2;
@@ -202,25 +211,23 @@ void setup() {
 
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   if (dma_display->begin()) {
-    Serial.println("[BOOT] Matriz LED inicializada OK");
+    LOG("[BOOT] Matriz LED inicializada OK");
   } else {
-    Serial.println("[BOOT] ERROR: No se pudo inicializar matriz");
+    LOG("[BOOT] ERROR: No se pudo inicializar matriz");
   }
 
   dma_display->setTextColor(65535);
   dma_display->fillScreen(0);
   dma_display->setBrightness(displayBrightness);
 
-  // Show loading animation
-  displayBootAnimation();
-
-  // Initialize SD Card
+  // Initialize SD Card first (needed for splash GIF)
   delay(100);
   initSDCard();
   listSDFiles();
 
-  // Initialize GIF Manager
+  // Initialize GIF Manager and show splash GIF during boot
   initGifManager();
+  initSplashGif();
 
   initWiFiManager();
   delay(100);
@@ -232,13 +239,13 @@ void setup() {
   delay(100);
   initMqtt();
 
-  Serial.println("\n========== SISTEMA LISTO ==========\n");
+  LOG("\n========== SISTEMA LISTO ==========\n");
 }
 
 void loop() {
   // Detect WiFi disconnection
   if (wifiConnected && WiFi.status() != WL_CONNECTED) {
-    Serial.println("[LOOP] WiFi DESCONECTADO!");
+    LOG("[LOOP] WiFi DESCONECTADO!");
     wifiConnected = false;
     mqttConnected = false;
     ntpSynchronized = false;
@@ -248,18 +255,25 @@ void loop() {
   if (!wifiConnected) {
     dnsServer.processNextRequest();
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\n[LOOP] WiFi CONECTADO!");
-      Serial.println("[LOOP] SSID: " + String(WiFi.SSID()));
-      Serial.println("[LOOP] IP: " + WiFi.localIP().toString());
+      LOG("\n[LOOP] WiFi CONECTADO!");
+      LOG("[LOOP] SSID: " + String(WiFi.SSID()));
+      LOG("[LOOP] IP: " + WiFi.localIP().toString());
       wifiConnected = true;
       dnsServer.stop();
-      Serial.println("[LOOP] DNS detenido");
+      LOG("[LOOP] DNS detenido");
+      // Start mDNS so device is reachable at dmd.local
+      if (MDNS.begin("dmd")) {
+        MDNS.addService("http", "tcp", 80);
+        LOG("[MDNS] Disponible en http://dmd.local");
+      } else {
+        LOG("[MDNS] ERROR: No se pudo iniciar mDNS");
+      }
       syncNTP();  // Non-blocking NTP sync
       // Immediately attempt MQTT connection now that WiFi is up
       connectMqtt();
     } else if (millis() - wifiConnectAttempt > 30000) {
       if (ssidWifi.length() > 0 && passwordWifi.length() > 0) {
-        Serial.println("[LOOP] Reintentando WiFi...");
+        LOG("[LOOP] Reintentando WiFi...");
         WiFi.disconnect();
         WiFi.begin(ssidWifi.c_str(), passwordWifi.c_str());
         wifiConnectAttempt = millis();
@@ -277,7 +291,8 @@ void loop() {
       wifiTimeoutOccurred = true;
       modeClockEnabled = false;  // Disable clock since WiFi/NTP won't sync
       isBootupPhase = false;      // Exit boot phase and show text
-      Serial.println("[BOOT] WiFi timeout - deshabilitado modo reloj");
+      stopSplashGif();
+      LOG("[BOOT] WiFi timeout - deshabilitado modo reloj");
     }
   }
 
@@ -293,6 +308,7 @@ void loop() {
 
   // Only clear screen when NOT playing a GIF (GIF draws its own frames)
   bool isGifMode = (serviceGifActive && serviceGifPath.length() > 0) ||
+                   (isBootupPhase && splashGifReady) ||
                    (!serviceTextActive && !isBootupPhase && currentMode == 2 && modeGifEnabled && totalGifFiles > 0);
   if (!isGifMode) {
     dma_display->fillScreen(0);
@@ -306,8 +322,12 @@ void loop() {
   else if (serviceTextActive && serviceText.length() > 0) {
     displayServiceText();
   } else if (isBootupPhase && hasWifiCredentials) {
-    // Show loading while waiting for WiFi/NTP sync
-    displayLoadingText();
+    // Show splash GIF while waiting for WiFi/NTP sync
+    if (splashGifReady) {
+      displaySplashGif();
+    } else {
+      displayLoadingText();
+    }
   } else {
     // If current mode is disabled, immediately switch to an enabled mode
     if ((currentMode == 0 && !modeClockEnabled) ||
